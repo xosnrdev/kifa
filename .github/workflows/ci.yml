@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      # The Windows runners have autocrlf enabled by default.
+      - name: Disable git autocrlf
+        run: git config --global core.autocrlf false
+        if: matrix.os == 'windows-latest'
+      - name: Checkout
+        uses: actions/checkout@v6
+      # https://github.com/actions/cache/blob/main/examples.md#rust---cargo
+      # Depends on `Cargo.lock` --> Has to be after checkout.
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install Rust
+        run: rustup toolchain install nightly --no-self-update --profile minimal --component rust-src,rustfmt,clippy
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run tests
+        run: cargo test --all --all-features --all-targets
+
+      - name: Run clippy
+        run: cargo clippy --all --all-features --all-targets -- --deny warnings -W clippy::pedantic
+
+  arm-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-unknown-linux-gnu # ARM64
+          - arm-unknown-linux-gnueabihf # ARM32
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        run: rustup toolchain install nightly --no-self-update --profile minimal --target ${{ matrix.target }}
+
+      - name: Install cross-compilation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
+
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: cross-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check build
+        run: cargo build --target ${{ matrix.target }}

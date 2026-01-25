@@ -1,0 +1,9 @@
+[package]
+name = "lib-kifa"
+description = "Crash-proof storage engine for log persistence."
+version = { workspace = true }
+edition = { workspace = true }
+authors = { workspace = true }
+license = { workspace = true }
+
+[dependencies]

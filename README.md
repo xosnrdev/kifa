@@ -1,0 +1,34 @@
+<p align="center">
+  <h2 align="center">Kifa (KEE-FAH)</h2>
+
+  <p align="center">
+    <b>Crash-proof local logging for POS and mobile money systems.</b>
+  </p>
+</p>
+
+This project is currently under active development. Use the checklist below to track progress and feature completeness.
+
+- [x] Setup project structure
+- [ ] Storage engine
+  - [ ] WAL for crash recovery
+  - [ ] Memtable for in-memory data storage
+  - [ ] SSTable for on-disk data storage
+  - [ ] Compaction for optimizing storage
+  - [ ] Flush mechanism to persist data from memtable to SSTable
+- [ ] CLI / User interface
+  - [ ] Sources / Ingesters for data input
+    - [ ] STDIN
+    - [ ] File tailing
+    - [ ] TCP socket
+    - [ ] UDP socket
+  - [ ] Query/Export Interface for data retrieval
+    - [ ] LSN-range queries
+    - [ ] Time-range queries
+    - [ ] Export to TEXT, JSON, CSV, HEX formats
+  - [ ] Configuration / Flags for customizing behavior
+    - [ ] Storage paths
+    - [ ] Performance tuning options
+  - [ ] Web UI for log visualization
+- [ ] Testing & Documentation
+- [ ] Demo
+- [ ] Release & Distribution

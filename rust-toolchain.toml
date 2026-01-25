@@ -1,0 +1,3 @@
+# Some rustfmt-unstable features require nightly
+[toolchain]
+channel = "nightly"

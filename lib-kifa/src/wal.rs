@@ -840,8 +840,10 @@ mod tests {
     }
 
     #[test]
-    // filling a 16MB segment requires ~4096 fsyncs without O_DIRECT.
-    #[cfg_attr(not(target_os = "linux"), ignore)]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "Filling a 16MB segment requires ~4096 fsyncs without O_DIRECT"
+    )]
     fn test_truncate_deletes_old_segments() {
         let dir = TempDir::new().unwrap();
 

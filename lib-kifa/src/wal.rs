@@ -22,7 +22,7 @@ use crate::helpers::{MEBI, SECTOR_SIZE, sync_dir_path, sync_file};
 
 const SEGMENT_SIZE: usize = 16 * MEBI;
 const MAX_ENTRY_SIZE: usize = MEBI;
-const MAGIC_TRAILER: u64 = 0x1405_7B7E_F767_814F; // Knuth's MMIX constant
+const MAGIC_TRAILER: u64 = 0x1405_7B7E_F767_814F;
 const ENTRY_HEADER_SIZE: usize = size_of::<EntryHeader>();
 const ENTRY_FOOTER_SIZE: usize = size_of::<EntryFooter>();
 const LSN_SIZE: usize = size_of::<u64>();
@@ -153,34 +153,28 @@ impl EntryFooter {
 
 /// Controls when data is fsync'd to disk.
 ///
-/// This is the primary tradeoff between performance and durability. Choose
-/// based on your tolerance for data loss:
-///
 /// | Mode | Behavior | Data at Risk |
 /// |------|----------|--------------|
 /// | `Normal` | Batch sync every ~50 writes | Up to 50 entries |
 /// | `Cautious` | Sync after each write | None (after return) |
 /// | `Emergency` | Sync immediately, pause compaction | None |
 ///
-/// # Examples
+/// Throughput depends on storage hardware. Consumer SSDs typically achieve
+/// 100-300 fsyncs/sec; enterprise `NVMe` with power-loss protection can exceed 30,000.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlushMode {
-    /// Batch syncs for throughput (~60 writes/sec).
+    /// Batch syncs for throughput.
     ///
-    /// Data is written to the OS buffer immediately but only fsynced every
-    /// ~50 writes. Up to 50 entries may be lost on power failure.
+    /// Data is written immediately but only fsynced every ~50 writes.
+    /// Up to 50 entries may be lost on power failure.
     Normal,
 
-    /// Sync after every write for durability (~60 writes/sec with fsync).
+    /// Sync after every write for durability.
     Cautious,
 
-    /// Maximum durability mode for imminent power loss.
+    /// Maximum durability for imminent power loss.
     ///
-    /// Like `Cautious`, but also:
-    /// - Immediately flushes the memtable to `SSTable`
-    /// - Pauses background compaction to reduce I/O
-    ///
-    /// Use when a UPS signals low battery or power failure is detected.
+    /// Like `Cautious`, but also pauses background compaction to reduce I/O.
     Emergency,
 }
 
@@ -503,8 +497,7 @@ impl Wal {
                     SegmentWriter::new(dir, last_segment_seq + 1)?
                 }
             } else {
-                // Segments exist but none have valid entries (e.g., crash before first write).
-                // Open the first existing segment at offset 0 instead of trying to create it.
+                // Segment file exists but contains no valid entries.
                 let first_segment = &segments[0];
                 let stem = first_segment.file_stem().and_then(|s| s.to_str()).unwrap_or("0");
                 let seq = u64::from_str_radix(stem, 16).unwrap_or_default();
@@ -881,7 +874,6 @@ mod tests {
     fn test_reopen_empty_segment() {
         let dir = TempDir::new().unwrap();
 
-        // Simulate crash before any writes
         {
             let _wal = Wal::open(dir.path()).unwrap();
         }

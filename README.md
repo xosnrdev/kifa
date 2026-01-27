@@ -11,7 +11,7 @@ This project is currently under active development. Use the checklist below to t
 - [x] Setup project structure
 - [ ] Storage engine
   - [x] WAL for crash recovery
-  - [ ] Memtable for in-memory data storage
+  - [x] Memtable for in-memory data storage
   - [ ] SSTable for on-disk data storage
   - [ ] Compaction for optimizing storage
   - [ ] Flush mechanism to persist data from memtable to SSTable

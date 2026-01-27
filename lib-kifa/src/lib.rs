@@ -10,4 +10,5 @@
 #[macro_use]
 pub mod helpers;
 pub(crate) mod buffer;
+pub mod memtable;
 pub(crate) mod wal;

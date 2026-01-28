@@ -70,6 +70,9 @@ pub enum FlushMode {
     Normal,
 
     /// Sync after every write for durability.
+    ///
+    /// Each [`StorageEngine::append`](crate::engine::StorageEngine::append)
+    /// returns only after fsync completes.
     Cautious,
 
     /// Maximum durability for imminent power loss.

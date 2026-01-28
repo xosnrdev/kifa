@@ -4,7 +4,7 @@
 //! On Linux, direct I/O bypasses the page cache so writes reach stable storage immediately.
 //! Callers can adjust [`FlushMode`] to trade throughput for stronger durability guarantees.
 
-use std::fs::{File, OpenOptions, read_dir};
+use std::fs::{self, File, OpenOptions, read_dir};
 #[cfg(unix)]
 use std::os::unix::fs::FileExt;
 #[cfg(target_os = "linux")]
@@ -434,7 +434,7 @@ pub struct Wal {
 
 impl Wal {
     pub fn open(dir: &Path) -> Result<Self, Error> {
-        std::fs::create_dir_all(dir)?;
+        fs::create_dir_all(dir)?;
 
         let segments = discover_segments(dir)?;
         let (next_lsn, writer) = if segments.is_empty() {

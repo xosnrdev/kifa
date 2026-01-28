@@ -5,10 +5,10 @@
 //! infrequent (only on memtable flush or compaction) and the file remains small. The checkpoint
 //! LSN indicates the highest LSN durably flushed to `SSTables`, allowing safe WAL truncation.
 
-use std::fmt;
 use std::fs::{File, OpenOptions, remove_file};
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
+use std::{fmt, fs};
 
 use crate::common::{atomic_rename, temp_path};
 use crate::helpers::{VERSION, sync_file};
@@ -331,7 +331,7 @@ impl Manifest {
 pub fn cleanup_temp_manifests(dir: &Path) -> Result<usize, Error> {
     let mut cleaned = 0;
 
-    for entry in std::fs::read_dir(dir)? {
+    for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
         if path.to_str().is_some_and(|s| s.ends_with(".manifest.tmp")) {

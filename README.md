@@ -16,11 +16,11 @@ This project is currently under active development. Use the checklist below to t
   - [x] Compaction for optimizing storage
   - [x] Flush mechanism to persist data from memtable to SSTable
 - [ ] CLI / User interface
-  - [ ] Sources / Ingesters for data input
-    - [ ] STDIN
-    - [ ] File tailing
-    - [ ] TCP socket
-    - [ ] UDP socket
+  - [x] Sources / Ingesters for data input
+    - [x] STDIN
+    - [x] File tailing
+    - [x] TCP socket
+    - [x] UDP socket
   - [ ] Query/Export Interface for data retrieval
     - [ ] LSN-range queries
     - [ ] Time-range queries

@@ -6,7 +6,7 @@
 
 /// A single log entry retrieved from storage.
 ///
-/// Each entry represents one append operation that was successfully persisted.
+/// Each entry represents one [`StorageEngine::append`] call that was successfully persisted.
 /// Entries are immutable once written and maintain strict LSN ordering.
 ///
 /// # Fields
@@ -14,6 +14,8 @@
 /// - `lsn`: Log sequence number, monotonically increasing across all entries.
 /// - `timestamp_ms`: Unix timestamp in milliseconds when the entry was written.
 /// - `data`: The raw bytes that were appended.
+///
+/// [`StorageEngine::append`]: crate::engine::StorageEngine::append
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     /// Log sequence number assigned at write time.

@@ -10,7 +10,9 @@ use std::fs::{File, OpenOptions, remove_file};
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
-use crate::helpers::{KIBI, VERSION, atomic_rename, sync_file, temp_path};
+use crate::common::{atomic_rename, temp_path};
+use crate::helpers::{VERSION, sync_file};
+use crate::{KIBI, map_err};
 
 const MAGIC_HEADER: u64 = 0x2C6F_E96E_E78B_6955;
 const MAGIC_FOOTER: u64 = 0x369D_EA0F_31A5_3F85;

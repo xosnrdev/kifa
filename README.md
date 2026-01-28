@@ -13,7 +13,7 @@ This project is currently under active development. Use the checklist below to t
   - [x] WAL for crash recovery
   - [x] Memtable for in-memory data storage
   - [x] SSTable for on-disk data storage
-  - [ ] Compaction for optimizing storage
+  - [x] Compaction for optimizing storage
   - [ ] Flush mechanism to persist data from memtable to SSTable
 - [ ] CLI / User interface
   - [ ] Sources / Ingesters for data input

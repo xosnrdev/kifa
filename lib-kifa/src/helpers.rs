@@ -10,9 +10,6 @@ pub const MEBI: usize = KIBI * KIBI; // 1MB
 pub(crate) const SECTOR_SIZE: usize = 4 * KIBI; // 4KB
 
 pub(crate) const VERSION: u32 = 1;
-pub(crate) const HEADER_SIZE: usize = 32;
-pub(crate) const FOOTER_SIZE: usize = 16;
-pub(crate) const MAX_ENTRY_SIZE: usize = MEBI;
 
 #[macro_export]
 macro_rules! map_err {

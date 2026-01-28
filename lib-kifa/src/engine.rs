@@ -31,7 +31,7 @@ const LOCK_FILE_NAME: &str = ".lock";
 
 /// Errors that can occur during storage engine operations.
 ///
-/// Most errors are recoverable — the engine remains in a consistent state and
+/// Most errors are recoverable; the engine remains in a consistent state and
 /// can continue processing. The exception is I/O errors during fsync, which
 /// cause a panic (data integrity cannot be guaranteed).
 #[derive(Debug)]

@@ -10,6 +10,7 @@
 #[macro_use]
 pub mod helpers;
 pub(crate) mod buffer;
+pub(crate) mod compaction;
 pub(crate) mod manifest;
 pub mod memtable;
 pub(crate) mod sstable;

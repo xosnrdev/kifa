@@ -12,11 +12,11 @@ use std::path::{Path, PathBuf};
 use crate::helpers::{MEBI, VERSION, atomic_rename, sync_file, temp_path};
 use crate::memtable::{Entry, Memtable};
 
-const MAGIC_HEADER: u64 = 0x5851_F42D_4C95_7F2D;
+pub const MAGIC_HEADER: u64 = 0x5851_F42D_4C95_7F2D;
 const MAGIC_FOOTER: u64 = 0x27BB_2EE6_87B0_B0FD;
-const HEADER_SIZE: usize = 32;
+pub const HEADER_SIZE: usize = 32;
 const FOOTER_SIZE: usize = 16;
-const MAX_ENTRY_SIZE: usize = MEBI;
+pub const MAX_ENTRY_SIZE: usize = MEBI;
 
 #[derive(Debug)]
 pub enum Error {

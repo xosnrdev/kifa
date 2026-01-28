@@ -18,7 +18,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fmt, io};
 
 use crate::buffer::AlignedBuffer;
-use crate::helpers::{MEBI, SECTOR_SIZE, sync_dir_path, sync_file};
+use crate::helpers::{SECTOR_SIZE, sync_dir_path, sync_file};
+use crate::{FlushMode, MEBI, map_err};
 
 const SEGMENT_SIZE: usize = 16 * MEBI;
 const MAX_ENTRY_SIZE: usize = MEBI;
@@ -149,33 +150,6 @@ impl EntryFooter {
             ]),
         }
     }
-}
-
-/// Controls when data is fsync'd to disk.
-///
-/// | Mode | Behavior | Data at Risk |
-/// |------|----------|--------------|
-/// | `Normal` | Batch sync every ~50 writes | Up to 50 entries |
-/// | `Cautious` | Sync after each write | None (after return) |
-/// | `Emergency` | Sync immediately, pause compaction | None |
-///
-/// Throughput depends on storage hardware. Consumer SSDs typically achieve
-/// 100-300 fsyncs/sec; enterprise `NVMe` with power-loss protection can exceed 30,000.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FlushMode {
-    /// Batch syncs for throughput.
-    ///
-    /// Data is written immediately but only fsynced every ~50 writes.
-    /// Up to 50 entries may be lost on power failure.
-    Normal,
-
-    /// Sync after every write for durability.
-    Cautious,
-
-    /// Maximum durability for imminent power loss.
-    ///
-    /// Like `Cautious`, but also pauses background compaction to reduce I/O.
-    Emergency,
 }
 
 #[derive(Debug)]

@@ -12,7 +12,8 @@ use std::fs::{File, OpenOptions, remove_file};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use crate::helpers::{HeapEntry, VERSION, atomic_rename, sync_file, temp_path};
+use crate::common::{atomic_rename, temp_path};
+use crate::helpers::{HeapEntry, VERSION, sync_file};
 use crate::manifest::{self, Manifest, SstableEntry};
 use crate::sstable::{
     Footer, HEADER_SIZE, Header, MAGIC_HEADER, MAX_ENTRY_SIZE, SstableIter, SstableReader,

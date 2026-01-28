@@ -1,46 +1,26 @@
 use std::cmp::Ordering;
-use std::fs::{File, rename};
+use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 
-pub const KIBI: usize = 1024; // 1KB
+use crate::KIBI;
 
-pub const MEBI: usize = KIBI * KIBI; // 1MB
+pub const SECTOR_SIZE: usize = 4 * KIBI; // 4KB
 
-pub(crate) const SECTOR_SIZE: usize = 4 * KIBI; // 4KB
-
-pub(crate) const VERSION: u32 = 1;
-
-#[macro_export]
-macro_rules! map_err {
-    ($variant:ident, $err_ty:ty) => {
-        impl From<$err_ty> for Error {
-            fn from(err: $err_ty) -> Self {
-                Error::$variant(err)
-            }
-        }
-    };
-}
+pub const VERSION: u32 = 1;
 
 #[cfg(not(target_os = "linux"))]
-pub(crate) fn sync_file(file: &File) {
+pub fn sync_file(file: &File) {
     file.sync_all().expect("FATAL: fsync failed");
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn sync_file(file: &File) {
+pub fn sync_file(file: &File) {
     file.sync_data().expect("FATAL: fdatasync failed");
 }
 
-#[must_use]
-pub fn temp_path(final_path: &Path) -> PathBuf {
-    let mut temp = final_path.as_os_str().to_owned();
-    temp.push(".tmp");
-    PathBuf::from(temp)
-}
-
 #[cfg(unix)]
-pub(crate) fn sync_dir(path: &Path) -> io::Result<()> {
+pub fn sync_dir(path: &Path) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         File::open(parent)?.sync_all()?;
     }
@@ -48,29 +28,23 @@ pub(crate) fn sync_dir(path: &Path) -> io::Result<()> {
 }
 
 #[cfg(unix)]
-pub(crate) fn sync_dir_path(path: &Path) -> io::Result<()> {
+pub fn sync_dir_path(path: &Path) -> io::Result<()> {
     File::open(path)?.sync_all()
 }
 
 #[allow(clippy::unnecessary_wraps)]
 #[cfg(windows)]
-pub(crate) fn sync_dir(_path: &Path) -> io::Result<()> {
+pub fn sync_dir(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
 #[allow(clippy::unnecessary_wraps)]
 #[cfg(windows)]
-pub(crate) fn sync_dir_path(_path: &Path) -> io::Result<()> {
+pub fn sync_dir_path(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-pub fn atomic_rename(from: &Path, to: &Path) -> io::Result<()> {
-    sync_dir(to)?;
-    rename(from, to)?;
-    sync_dir(to)
-}
-
-pub(crate) struct HeapEntry {
+pub struct HeapEntry {
     pub lsn: u64,
     pub timestamp_ms: u64,
     pub data: Vec<u8>,

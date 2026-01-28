@@ -226,9 +226,7 @@ fn open_segment_file(path: &Path, create: bool) -> Result<File, Error> {
     let mut opts = OpenOptions::new();
     opts.read(true).write(true);
 
-    if create {
-        opts.create_new(true);
-    }
+    opts.create_new(create);
 
     opts.custom_flags(libc::O_DIRECT | libc::O_DSYNC);
 
@@ -240,9 +238,7 @@ fn open_segment_file(path: &Path, create: bool) -> Result<File, Error> {
     let mut opts = OpenOptions::new();
     opts.read(true).write(true);
 
-    if create {
-        opts.create_new(true);
-    }
+    opts.create_new(create);
 
     opts.open(path).map_err(Error::SegmentCreation)
 }

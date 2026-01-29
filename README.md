@@ -25,9 +25,9 @@ This project is currently under active development. Use the checklist below to t
     - [ ] LSN-range queries
     - [ ] Time-range queries
     - [ ] Export to TEXT, JSON, CSV, HEX formats
-  - [ ] Configuration / Flags for customizing behavior
-    - [ ] Storage paths
-    - [ ] Performance tuning options
+  - [x] Configuration / Flags for customizing behavior
+    - [x] Storage paths
+    - [x] Performance tuning options
   - [ ] Web UI for log visualization
 - [ ] Testing & Documentation
 - [ ] Demo

@@ -310,7 +310,7 @@ impl StorageEngine {
     /// # Ok::<(), lib_kifa::engine::Error>(())
     /// ```
     pub fn open(dir: &Path, config: Config) -> Result<(Self, RecoveryReport), Error> {
-        std::fs::create_dir_all(dir)?;
+        fs::create_dir_all(dir)?;
 
         let lock_file = acquire_lock(dir)?;
 
@@ -935,8 +935,8 @@ fn acquire_lock(dir: &Path) -> Result<File, Error> {
 
     match file.try_lock() {
         Ok(()) => Ok(file),
-        Err(std::fs::TryLockError::WouldBlock) => Err(Error::DirectoryLocked),
-        Err(std::fs::TryLockError::Error(e)) => Err(Error::Io(e)),
+        Err(fs::TryLockError::WouldBlock) => Err(Error::DirectoryLocked),
+        Err(fs::TryLockError::Error(e)) => Err(Error::Io(e)),
     }
 }
 
@@ -944,7 +944,7 @@ fn cleanup_orphan_sstables(dir: &Path, manifest: &Manifest) -> Result<usize, Err
     let registered_paths: Vec<_> = manifest.sstables().iter().map(|e| &e.path).collect();
     let mut cleaned = 0;
 
-    for entry in std::fs::read_dir(dir)? {
+    for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
 
@@ -981,7 +981,7 @@ fn replay_wal_from_checkpoint(
     let mut gaps = Vec::new();
     let mut expected_lsn = checkpoint_lsn + 1;
 
-    for entry in wal::Wal::entries(dir)? {
+    for entry in Wal::entries(dir)? {
         // Entries at or below checkpoint_lsn are already persisted in SSTables.
         if entry.lsn <= checkpoint_lsn {
             continue;

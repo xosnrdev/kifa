@@ -1,6 +1,6 @@
 //! Segmented write-ahead log for crash-proof persistence.
 //!
-//! Entries are written to 16MB segment files and validated with dual CRCs to detect corruption.
+//! Entries are written to 16MiB segment files and validated with dual CRCs to detect corruption.
 //! On Linux, direct I/O bypasses the page cache so writes reach stable storage immediately.
 //! Callers can adjust [`FlushMode`] to trade throughput for stronger durability guarantees.
 
@@ -805,7 +805,7 @@ mod tests {
     #[test]
     #[cfg_attr(
         not(target_os = "linux"),
-        ignore = "Filling a 16MB segment requires ~4096 fsyncs without O_DIRECT"
+        ignore = "Filling a 16MiB segment requires ~4096 fsyncs without O_DIRECT"
     )]
     fn test_truncate_deletes_old_segments() {
         let dir = TempDir::new().unwrap();

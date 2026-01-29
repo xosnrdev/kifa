@@ -11,7 +11,7 @@
 //! to reject typos rather than silently ignoring them.
 
 use std::path::{Path, PathBuf};
-use std::{env, fmt, fs, io};
+use std::{env, fmt, fs, io, net};
 
 use lib_kifa::{FlushMode, KIBI, MEBI, map_err};
 use serde::Deserialize;
@@ -412,7 +412,7 @@ pub fn validate(config: &AppConfig) -> Result<(), ValidationError> {
     }
 
     for addr in &config.sources.tcp {
-        if addr.parse::<std::net::SocketAddr>().is_err() {
+        if addr.parse::<net::SocketAddr>().is_err() {
             return Err(ValidationError {
                 field: "tcp",
                 message: format!("invalid address: '{addr}'"),
@@ -421,7 +421,7 @@ pub fn validate(config: &AppConfig) -> Result<(), ValidationError> {
     }
 
     for addr in &config.sources.udp {
-        if addr.parse::<std::net::SocketAddr>().is_err() {
+        if addr.parse::<net::SocketAddr>().is_err() {
             return Err(ValidationError {
                 field: "udp",
                 message: format!("invalid address: '{addr}'"),

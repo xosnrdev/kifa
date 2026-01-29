@@ -205,7 +205,7 @@ impl Manifest {
             reader.read_exact(&mut path_bytes)?;
             hasher.update(&path_bytes);
 
-            let path_str = std::str::from_utf8(&path_bytes).map_err(|_| Error::InvalidUtf8Path)?;
+            let path_str = str::from_utf8(&path_bytes).map_err(|_| Error::InvalidUtf8Path)?;
             let sstable_path = PathBuf::from(path_str);
 
             if validate_sstables && !sstable_path.exists() {

@@ -17,12 +17,17 @@ edition = "2024"
 authors = ["Success Kingsley <xosnrdev@gmail.com>"]
 license = "MIT OR Apache-2.0"
 
+[workspace.dependencies]
+log = "0.4.29"
+
 [dependencies]
 anyhow = "1.0.100"
 clap = { version = "4.5.55", features = ["derive"] }
 clap-cargo = { version = "0.18.3", features = ["clap"] }
+env_logger = "0.11.8"
 humantime = "2.3.0"
 lib-kifa = { path = "./lib-kifa" }
+log = { workspace = true }
 notify = "8.2.0"
 serde = { version = "1.0.228", features = ["derive"] }
 signal-hook = "0.4.3"

@@ -464,9 +464,11 @@ impl StorageEngine {
         self.wal.set_flush_mode(mode);
 
         if matches!(mode, FlushMode::Emergency) {
+            log::warn!("Flush mode set to Emergency: compaction paused, memtable flushing");
             self.compaction.emergency.store(true, Ordering::Release);
             let _ = self.flush_internal();
         } else {
+            log::info!("Flush mode set to {mode:?}");
             self.compaction.emergency.store(false, Ordering::Release);
             self.notify_compaction();
         }
@@ -537,6 +539,14 @@ impl StorageEngine {
         let _ = self.wal.truncate_log(checkpoint_lsn);
 
         inner.memtable = Memtable::new();
+
+        log::info!(
+            "Memtable flushed: {} entries, LSN {}-{}, path {}",
+            info.entry_count,
+            info.min_lsn,
+            info.max_lsn,
+            info.path.display()
+        );
 
         self.notify_compaction();
 
@@ -892,6 +902,7 @@ fn compaction_loop(
         }
 
         if emergency.load(Ordering::Acquire) {
+            log::warn!("Compaction paused: emergency mode active");
             continue;
         }
 
@@ -904,8 +915,12 @@ fn compaction_loop(
             continue;
         };
 
-        let Ok(output) = run_compaction(dir, &inputs) else {
-            continue;
+        let output = match run_compaction(dir, &inputs) {
+            Ok(output) => output,
+            Err(e) => {
+                log::error!("Compaction failed: {e}");
+                continue;
+            }
         };
 
         // Rechecks shutdown after the potentially long-running compaction completes.
@@ -915,7 +930,7 @@ fn compaction_loop(
 
         let mut guard = inner.lock().unwrap_or_else(sync::PoisonError::into_inner);
         if let Ok(result) = commit_compaction(&mut guard.manifest, output) {
-            eprintln!(
+            log::info!(
                 "Compacted {} SSTables into {}: {} entries, LSN {}-{}, removed {} files",
                 result.input_count,
                 result.output_path.display(),

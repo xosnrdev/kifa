@@ -49,7 +49,7 @@ impl fmt::Display for Error {
             }
             Self::TempFileCleanup(e) => write!(f, "temp file cleanup failed: {e}"),
             Self::EntryTooLarge { size, max } => {
-                write!(f, "entry too large: {size} bytes (max {max})")
+                write!(f, "entry too large: {} MiB (max {} MiB)", size / MEBI, max / MEBI)
             }
         }
     }

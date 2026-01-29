@@ -270,21 +270,21 @@ fn resolve_command(cli: &Cli) -> Result<ResolvedCommand> {
 }
 
 fn print_recovery_report(report: &RecoveryReport) {
-    eprintln!("Recovery: {} entries replayed", report.wal_entries_replayed);
-    eprintln!("  SSTables: {}", report.sstable_count);
+    log::info!("Recovery: {} entries replayed", report.wal_entries_replayed);
+    log::info!("  SSTables: {}", report.sstable_count);
 
     if let (Some(first), Some(last)) = (report.first_timestamp_ms, report.last_timestamp_ms) {
-        eprintln!("  Time range: {} - {}", format_timestamp_ms(first), format_timestamp_ms(last));
+        log::info!("  Time range: {} - {}", format_timestamp_ms(first), format_timestamp_ms(last));
     }
 
     if report.orphan_sstables_cleaned > 0 {
-        eprintln!("  Orphan SSTables cleaned: {}", report.orphan_sstables_cleaned);
+        log::warn!("  Orphan SSTables cleaned: {}", report.orphan_sstables_cleaned);
     }
 
     if !report.gaps.is_empty() {
-        eprintln!("  WARNING: {} gaps in LSN sequence:", report.gaps.len());
+        log::warn!("  {} gaps in LSN sequence:", report.gaps.len());
         for gap in &report.gaps {
-            eprintln!("    Missing: {} - {}", gap.start, gap.end);
+            log::warn!("    Missing: {} - {}", gap.start, gap.end);
         }
     }
 }
@@ -348,7 +348,7 @@ fn run_query_command(data_dir: &Path, cmd: &QueryCmd) -> Result<ExitCode> {
     };
 
     let count = query::run_query(&options).context("query failed")?;
-    eprintln!("Returned {count} entries");
+    log::info!("Returned {count} entries");
     Ok(ExitCode::SUCCESS)
 }
 
@@ -413,37 +413,37 @@ fn run_daemon(config: &AppConfig) -> Result<ExitCode> {
     if config.sources.stdin {
         let source = StdinSource::new(Arc::clone(&shutdown));
         runner.spawn(source, handle.clone());
-        eprintln!("Source: stdin");
+        log::info!("Source: stdin");
     }
 
     for path in &config.sources.files {
         let source = FileTailer::new(path.clone(), Arc::clone(&shutdown));
         runner.spawn(source, handle.clone());
-        eprintln!("Source: file {}", path.display());
+        log::info!("Source: file {}", path.display());
     }
 
     for addr in &config.sources.tcp {
         let source = TcpSource::bind(addr.as_str(), Arc::clone(&shutdown))
             .with_context(|| format!("failed to bind TCP {addr}"))?;
         runner.spawn(source, handle.clone());
-        eprintln!("Source: tcp {addr}");
+        log::info!("Source: tcp {addr}");
     }
 
     for addr in &config.sources.udp {
         let source = UdpSource::bind(addr.as_str(), Arc::clone(&shutdown))
             .with_context(|| format!("failed to bind UDP {addr}"))?;
         runner.spawn(source, handle.clone());
-        eprintln!("Source: udp {addr}");
+        log::info!("Source: udp {addr}");
     }
 
-    eprintln!(
-        "Config: memtable_threshold={}, compaction_threshold={}, compaction={}, flush_mode={:?}",
-        config.storage.memtable_flush_threshold,
+    log::info!(
+        "Config: memtable_threshold={} MiB, compaction_threshold={}, compaction={}, flush_mode={:?}",
+        config.storage.memtable_flush_threshold / MEBI,
         config.storage.compaction_threshold,
         config.storage.compaction_enabled,
         config.wal.flush_mode
     );
-    eprintln!("Ready. Press Ctrl+C to shutdown.");
+    log::info!("Ready. Press Ctrl+C to shutdown.");
 
     let ingester_thread = thread::spawn(move || ingester.run());
 
@@ -466,17 +466,17 @@ fn run_daemon(config: &AppConfig) -> Result<ExitCode> {
             {
                 continue;
             }
-            eprintln!("source error: {e}");
+            log::error!("source error: {e}");
             exit_code = ExitCode::FAILURE;
         }
     }
 
     let stats = ingester_result;
-    eprintln!("Shutdown complete.");
-    eprintln!("  Entries ingested: {}", stats.entries_ingested);
-    eprintln!("  Bytes ingested: {}", stats.bytes_ingested);
+    log::info!("Shutdown complete.");
+    log::info!("  Entries ingested: {}", stats.entries_ingested);
+    log::info!("  Bytes ingested: {} MiB", stats.bytes_ingested as usize / MEBI);
     if stats.entries_failed > 0 {
-        eprintln!("  Entries failed: {}", stats.entries_failed);
+        log::warn!("  Entries failed: {}", stats.entries_failed);
     }
 
     // Signal-based exit codes take precedence over source errors to accurately report termination

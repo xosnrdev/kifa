@@ -18,6 +18,8 @@ authors = ["Success Kingsley <xosnrdev@gmail.com>"]
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+clap = { version = "4.5.55", features = ["derive"] }
+humantime = "2.3.0"
 lib-kifa = { path = "./lib-kifa" }
 notify = "8.2.0"
 serde = { version = "1.0.228", features = ["derive"] }

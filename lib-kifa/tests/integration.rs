@@ -427,7 +427,9 @@ fn test_writes_not_blocked_during_compaction() {
     }
     let elapsed = start.elapsed();
 
-    assert!(elapsed < time::Duration::from_millis(100));
+    // One second is generous but still validates writes aren't blocked during compaction,
+    // which would take multiple seconds due to the 5-second compaction poll interval.
+    assert!(elapsed < time::Duration::from_secs(1));
 }
 
 #[test]

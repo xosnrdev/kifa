@@ -18,9 +18,14 @@ authors = ["Success Kingsley <xosnrdev@gmail.com>"]
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+anyhow = "1.0.100"
+clap = { version = "4.5.55", features = ["derive"] }
+clap-cargo = { version = "0.18.3", features = ["clap"] }
+humantime = "2.3.0"
 lib-kifa = { path = "./lib-kifa" }
 notify = "8.2.0"
 serde = { version = "1.0.228", features = ["derive"] }
+signal-hook = "0.4.3"
 toml = "0.9.11"
 
 [dev-dependencies]

@@ -1,0 +1,538 @@
+//! Read-only query and export interface for the storage engine.
+//!
+//! The module uses [`humantime`] for time parsing because the standard library's `Duration` lacks
+//! string parsing entirely. This crate supports both relative offsets (`1h`, `30m`) and RFC3339
+//! timestamps without pulling in heavier alternatives like `chrono`.
+//!
+//! JSON and CSV serialization uses manual byte-level escaping rather than `serde_json` to keep the
+//! dependency footprint minimal. Binary data that fails UTF-8 validation appears as `\uXXXX`
+//! escapes in JSON or `[hex:...]` fallback in CSV.
+//!
+//! Exports write to a temporary file, call `sync_all()`, then atomically rename to the final path.
+//! This pattern ensures readers never observe partial output even if the process crashes mid-write.
+
+use std::fmt;
+use std::fs::{File, remove_file};
+use std::io::{self, BufWriter, Write};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use lib_kifa::common::{atomic_rename, temp_path};
+use lib_kifa::engine::{Config, Stats, StorageEngine};
+use lib_kifa::{Entry, engine, map_err};
+
+#[derive(Debug)]
+pub enum Error {
+    Engine(engine::Error),
+    Io(io::Error),
+    InvalidLsnRange { from: u64, to: u64 },
+    InvalidTimeRange { from_ms: u64, to_ms: u64 },
+    TimeParseFailed(String),
+}
+
+map_err!(Engine, engine::Error);
+map_err!(Io, io::Error);
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Engine(e) => e.fmt(f),
+            Self::Io(e) => e.fmt(f),
+            Self::InvalidLsnRange { from, to } => {
+                write!(f, "invalid LSN range: {from} > {to}")
+            }
+            Self::InvalidTimeRange { from_ms, to_ms } => {
+                write!(
+                    f,
+                    "--from-time ({}) is after --to-time ({})",
+                    format_timestamp_ms(*from_ms),
+                    format_timestamp_ms(*to_ms)
+                )
+            }
+            Self::TimeParseFailed(s) => {
+                write!(
+                    f,
+                    "failed to parse time `{s}`: expected relative offset (1h, 30m, 2d) \
+                     or timestamp (YYYY-MM-DD HH:mm:ss or YYYY-MM-DDTHH:mm:ssZ)"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
+// The guard deletes the temp file on drop unless disarmed, ensuring partial writes are cleaned up
+// if an error occurs before the atomic rename completes.
+struct TempFileGuard<'a> {
+    path: &'a Path,
+    disarm: bool,
+}
+
+impl<'a> TempFileGuard<'a> {
+    fn new(path: &'a Path) -> Self {
+        Self { path, disarm: false }
+    }
+
+    fn disarm(&mut self) {
+        self.disarm = true;
+    }
+}
+
+impl Drop for TempFileGuard<'_> {
+    fn drop(&mut self) {
+        if !self.disarm {
+            let _ = remove_file(self.path);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum OutputFormat {
+    Text,
+    Json,
+    Csv,
+    Hex,
+}
+
+#[derive(Debug, Clone)]
+pub struct QueryOptions {
+    pub data_dir: PathBuf,
+    pub from_lsn: Option<u64>,
+    pub to_lsn: Option<u64>,
+    pub from_time_ms: Option<u64>,
+    pub to_time_ms: Option<u64>,
+    pub format: OutputFormat,
+    pub output_file: Option<PathBuf>,
+}
+
+pub fn parse_time_input(s: &str) -> Result<u64, Error> {
+    let trimmed = s.trim();
+
+    if trimmed.is_empty() {
+        return Err(Error::TimeParseFailed(s.to_string()));
+    }
+
+    if let Ok(duration) = humantime::parse_duration(trimmed) {
+        let now = SystemTime::now();
+        let target =
+            now.checked_sub(duration).ok_or_else(|| Error::TimeParseFailed(s.to_string()))?;
+        let unix_ms = target
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(|_| Error::TimeParseFailed(s.to_string()))?;
+        return Ok(u64::try_from(unix_ms.as_millis()).unwrap_or(u64::MAX));
+    }
+
+    if let Ok(system_time) = humantime::parse_rfc3339_weak(trimmed) {
+        let unix_ms = system_time
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(|_| Error::TimeParseFailed(s.to_string()))?;
+        return Ok(u64::try_from(unix_ms.as_millis()).unwrap_or(u64::MAX));
+    }
+
+    // Appending midnight allows users to specify just a date like "2026-01-29" without a time component.
+    let with_midnight = format!("{trimmed} 00:00:00");
+    if let Ok(system_time) = humantime::parse_rfc3339_weak(&with_midnight) {
+        let unix_ms = system_time
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(|_| Error::TimeParseFailed(s.to_string()))?;
+        return Ok(u64::try_from(unix_ms.as_millis()).unwrap_or(u64::MAX));
+    }
+
+    Err(Error::TimeParseFailed(s.to_string()))
+}
+
+pub fn validate_time_range(from_ms: Option<u64>, to_ms: Option<u64>) -> Result<(), Error> {
+    if let (Some(from_ms), Some(to_ms)) = (from_ms, to_ms)
+        && from_ms > to_ms
+    {
+        return Err(Error::InvalidTimeRange { from_ms, to_ms });
+    }
+    Ok(())
+}
+
+pub fn run_query(options: &QueryOptions) -> Result<u64, Error> {
+    let from = options.from_lsn.unwrap_or_default();
+    let to = options.to_lsn.unwrap_or(u64::MAX);
+
+    if from > to {
+        return Err(Error::InvalidLsnRange { from, to });
+    }
+
+    let from_time = options.from_time_ms.unwrap_or_default();
+    let to_time = options.to_time_ms.unwrap_or(u64::MAX);
+
+    validate_time_range(Some(from_time), Some(to_time))?;
+
+    // Compaction is disabled because queries are read-only and should not mutate storage.
+    let config = Config { compaction_enabled: false, ..Config::default() };
+    let (engine, _) = StorageEngine::open(&options.data_dir, config)?;
+    let entries = engine.scan(from, to)?;
+
+    let mut count = 0;
+    let stdout = io::stdout();
+    let mut writer = BufWriter::new(stdout.lock());
+
+    if options.format == OutputFormat::Csv {
+        writeln!(writer, "lsn,timestamp,timestamp_ms,data")?;
+    }
+
+    for entry in entries {
+        if entry.timestamp_ms < from_time || entry.timestamp_ms > to_time {
+            continue;
+        }
+        write_entry(&mut writer, &entry, options.format)?;
+        count += 1;
+    }
+
+    writer.flush()?;
+    Ok(count)
+}
+
+pub fn run_export(options: &QueryOptions) -> Result<u64, Error> {
+    let output_path = options.output_file.as_ref().expect("output_file required for export");
+    let temp_path = temp_path(output_path);
+
+    let from = options.from_lsn.unwrap_or_default();
+    let to = options.to_lsn.unwrap_or(u64::MAX);
+
+    if from > to {
+        return Err(Error::InvalidLsnRange { from, to });
+    }
+
+    let from_time = options.from_time_ms.unwrap_or_default();
+    let to_time = options.to_time_ms.unwrap_or(u64::MAX);
+
+    validate_time_range(Some(from_time), Some(to_time))?;
+
+    let config = Config { compaction_enabled: false, ..Config::default() };
+    let (engine, _) = StorageEngine::open(&options.data_dir, config)?;
+    let entries = engine.scan(from, to)?;
+
+    let file = File::create(&temp_path)?;
+    let mut guard = TempFileGuard::new(&temp_path);
+    let mut writer = BufWriter::new(file);
+
+    if options.format == OutputFormat::Csv {
+        writeln!(writer, "lsn,timestamp,timestamp_ms,data")?;
+    }
+
+    let mut count = 0;
+    for entry in entries {
+        if entry.timestamp_ms < from_time || entry.timestamp_ms > to_time {
+            continue;
+        }
+        write_entry(&mut writer, &entry, options.format)?;
+        count += 1;
+    }
+
+    writer.flush()?;
+    let file = writer.into_inner().map_err(|e| io::Error::other(e.to_string()))?;
+    file.sync_all()?;
+    // Explicit drop ensures the file handle is closed before rename, which Windows requires.
+    drop(file);
+
+    atomic_rename(&temp_path, output_path)?;
+    // Disarm after rename succeeds because the temp file no longer exists at its original path.
+    guard.disarm();
+
+    eprintln!("Exported {count} entries to {}", output_path.display());
+    Ok(count)
+}
+
+pub fn run_stats(data_dir: &Path) -> Result<Stats, Error> {
+    let config = Config { compaction_enabled: false, ..Config::default() };
+    let (engine, report) = StorageEngine::open(data_dir, config)?;
+    let stats = engine.stats();
+
+    let total_entries = stats.wal.last_durable_lsn;
+
+    println!("Storage:");
+    println!("  Total entries: {total_entries}");
+    println!("  SSTables: {} (checkpoint LSN: {})", stats.sstable_count, stats.checkpoint_lsn);
+    println!("  Memtable: {} entries", stats.memtable_entry_count);
+    println!();
+    println!("WAL:");
+    println!("  Flush mode: {:?}", stats.wal.flush_mode);
+    println!();
+    println!("Health:");
+    if let (Some(first_ts), Some(last_ts)) = (report.first_timestamp_ms, report.last_timestamp_ms) {
+        println!(
+            "  Time range: {} - {}",
+            format_timestamp_ms(first_ts),
+            format_timestamp_ms(last_ts)
+        );
+    }
+    if report.gaps.is_empty() {
+        println!("  Gaps: none");
+    } else {
+        println!("  Gaps: {} ranges", report.gaps.len());
+    }
+
+    Ok(stats)
+}
+
+fn write_entry<W: Write>(writer: &mut W, entry: &Entry, format: OutputFormat) -> io::Result<()> {
+    match format {
+        OutputFormat::Text => write_entry_text(writer, entry),
+        OutputFormat::Json => write_entry_json(writer, entry),
+        OutputFormat::Csv => write_entry_csv(writer, entry),
+        OutputFormat::Hex => write_entry_hex(writer, entry),
+    }
+}
+
+pub fn format_timestamp_ms(ms: u64) -> String {
+    let system_time = UNIX_EPOCH + Duration::from_millis(ms);
+    humantime::format_rfc3339_seconds(system_time)
+        .to_string()
+        .replace('T', " ")
+        .replace('Z', " UTC")
+}
+
+fn write_entry_text<W: Write>(writer: &mut W, entry: &Entry) -> io::Result<()> {
+    let data_str = String::from_utf8_lossy(&entry.data);
+    let timestamp = format_timestamp_ms(entry.timestamp_ms);
+    writeln!(writer, "[{}] {} {}", entry.lsn, timestamp, data_str)
+}
+
+fn write_entry_json<W: Write>(writer: &mut W, entry: &Entry) -> io::Result<()> {
+    let timestamp = format_timestamp_ms(entry.timestamp_ms);
+    write!(
+        writer,
+        r#"{{ "lsn":{}, "timestamp":"{}", "timestamp_ms":{}, "data":""#,
+        entry.lsn, timestamp, entry.timestamp_ms
+    )?;
+    write_json_escaped_bytes(writer, &entry.data)?;
+    writeln!(writer, r#"" }}"#)
+}
+
+fn write_entry_csv<W: Write>(writer: &mut W, entry: &Entry) -> io::Result<()> {
+    let timestamp = format_timestamp_ms(entry.timestamp_ms);
+    write!(writer, r#"{},"{}",{},""#, entry.lsn, timestamp, entry.timestamp_ms)?;
+    write_csv_escaped_bytes(writer, &entry.data)?;
+    writeln!(writer, r#"""#)
+}
+
+fn write_entry_hex<W: Write>(writer: &mut W, entry: &Entry) -> io::Result<()> {
+    write!(writer, "{:016x} {:016x} ", entry.lsn, entry.timestamp_ms)?;
+    for byte in &entry.data {
+        write!(writer, "{byte:02x}")?;
+    }
+    writeln!(writer)
+}
+
+fn write_json_escaped_bytes<W: Write>(writer: &mut W, data: &[u8]) -> io::Result<()> {
+    for &byte in data {
+        match byte {
+            b'"' => write!(writer, "\\\"")?,
+            b'\\' => write!(writer, "\\\\")?,
+            b'\n' => write!(writer, "\\n")?,
+            b'\r' => write!(writer, "\\r")?,
+            b'\t' => write!(writer, "\\t")?,
+            // Printable ASCII range excluding quote (0x22) and backslash (0x5C) can be written directly.
+            0x20..=0x21 | 0x23..=0x5B | 0x5D..=0x7E => writer.write_all(&[byte])?,
+            _ => write!(writer, "\\u{byte:04x}")?,
+        }
+    }
+    Ok(())
+}
+
+fn write_csv_escaped_bytes<W: Write>(writer: &mut W, data: &[u8]) -> io::Result<()> {
+    if let Ok(s) = str::from_utf8(data) {
+        for ch in s.chars() {
+            if ch == '"' {
+                write!(writer, r#""""#)?;
+            } else {
+                write!(writer, "{ch}")?;
+            }
+        }
+    } else {
+        write!(writer, "[hex:")?;
+        for byte in data {
+            write!(writer, "{byte:02x}")?;
+        }
+        write!(writer, "]")?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn now_ms() -> u64 {
+        u64::try_from(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis())
+            .unwrap()
+    }
+
+    fn assert_approx_eq(actual: u64, expected: u64, tolerance: u64) {
+        let diff = actual.abs_diff(expected);
+        assert!(diff < tolerance, "expected {expected} ± {tolerance}, got {actual} (diff: {diff})");
+    }
+
+    #[test]
+    fn test_parse_time_relative_hours() {
+        let result = parse_time_input("1h").unwrap();
+        let expected_approx = now_ms() - 3600 * 1000;
+        assert_approx_eq(result, expected_approx, 1000);
+    }
+
+    #[test]
+    fn test_parse_time_relative_minutes() {
+        let result = parse_time_input("30m").unwrap();
+        let expected_approx = now_ms() - 30 * 60 * 1000;
+        assert_approx_eq(result, expected_approx, 1000);
+    }
+
+    #[test]
+    fn test_parse_time_relative_days() {
+        let result = parse_time_input("2d").unwrap();
+        let expected_approx = now_ms() - 2 * 24 * 3600 * 1000;
+        assert_approx_eq(result, expected_approx, 1000);
+    }
+
+    #[test]
+    fn test_parse_time_relative_combined() {
+        let result = parse_time_input("1h30m").unwrap();
+        let expected_approx = now_ms() - 90 * 60 * 1000;
+        assert_approx_eq(result, expected_approx, 1000);
+    }
+
+    #[test]
+    fn test_parse_time_absolute_weak() {
+        let result = parse_time_input("2026-01-29 12:00:00").unwrap();
+        assert_eq!(result, 1_769_688_000_000);
+    }
+
+    #[test]
+    fn test_parse_time_absolute_rfc3339() {
+        let result = parse_time_input("2026-01-29T12:00:00Z").unwrap();
+        assert_eq!(result, 1_769_688_000_000);
+    }
+
+    #[test]
+    fn test_parse_time_invalid_empty() {
+        assert!(parse_time_input("").is_err());
+        assert!(parse_time_input("   ").is_err());
+    }
+
+    #[test]
+    fn test_parse_time_invalid_garbage() {
+        assert!(parse_time_input("yesterday").is_err());
+        assert!(parse_time_input("today").is_err());
+    }
+
+    #[test]
+    fn test_validate_time_range_valid() {
+        assert!(validate_time_range(Some(100), Some(200)).is_ok());
+        assert!(validate_time_range(Some(100), Some(100)).is_ok());
+        assert!(validate_time_range(None, Some(200)).is_ok());
+        assert!(validate_time_range(Some(100), None).is_ok());
+        assert!(validate_time_range(None, None).is_ok());
+    }
+
+    #[test]
+    fn test_validate_time_range_invalid() {
+        assert!(validate_time_range(Some(200), Some(100)).is_err());
+    }
+
+    #[test]
+    fn test_format_json_utf8() {
+        let entry =
+            Entry { lsn: 42, timestamp_ms: 1_769_688_000_000, data: b"hello world".to_vec() };
+        let mut buf = Vec::new();
+        write_entry_json(&mut buf, &entry).unwrap();
+        assert_eq!(
+            buf,
+            b"{ \"lsn\":42, \"timestamp\":\"2026-01-29 12:00:00 UTC\", \"timestamp_ms\":1769688000000, \"data\":\"hello world\" }\n"
+        );
+    }
+
+    #[test]
+    fn test_format_json_special_chars() {
+        let entry = Entry {
+            lsn: 1,
+            timestamp_ms: 1_769_688_000_000,
+            data: b"line\nwith\ttabs\"quotes\\".to_vec(),
+        };
+        let mut buf = Vec::new();
+        write_entry_json(&mut buf, &entry).unwrap();
+        assert_eq!(
+            buf,
+            b"{ \"lsn\":1, \"timestamp\":\"2026-01-29 12:00:00 UTC\", \"timestamp_ms\":1769688000000, \"data\":\"line\\nwith\\ttabs\\\"quotes\\\\\" }\n"
+        );
+    }
+
+    #[test]
+    fn test_format_json_binary() {
+        let entry =
+            Entry { lsn: 99, timestamp_ms: 1_769_688_000_000, data: vec![0x00, 0xFF, 0x80] };
+        let mut buf = Vec::new();
+        write_entry_json(&mut buf, &entry).unwrap();
+        assert_eq!(
+            buf,
+            b"{ \"lsn\":99, \"timestamp\":\"2026-01-29 12:00:00 UTC\", \"timestamp_ms\":1769688000000, \"data\":\"\\u0000\\u00ff\\u0080\" }\n"
+        );
+    }
+
+    #[test]
+    fn test_format_json_control_chars() {
+        let entry = Entry { lsn: 7, timestamp_ms: 1_769_688_000_000, data: vec![0x01, 0x1F, 0x7F] };
+        let mut buf = Vec::new();
+        write_entry_json(&mut buf, &entry).unwrap();
+        assert_eq!(
+            buf,
+            b"{ \"lsn\":7, \"timestamp\":\"2026-01-29 12:00:00 UTC\", \"timestamp_ms\":1769688000000, \"data\":\"\\u0001\\u001f\\u007f\" }\n"
+        );
+    }
+
+    #[test]
+    fn test_format_csv_utf8() {
+        let entry =
+            Entry { lsn: 10, timestamp_ms: 1_769_688_000_000, data: b"simple data".to_vec() };
+        let mut buf = Vec::new();
+        write_entry_csv(&mut buf, &entry).unwrap();
+        assert_eq!(buf, b"10,\"2026-01-29 12:00:00 UTC\",1769688000000,\"simple data\"\n");
+    }
+
+    #[test]
+    fn test_format_csv_quotes() {
+        let entry = Entry {
+            lsn: 11,
+            timestamp_ms: 1_769_688_000_000,
+            data: b"has \"quotes\" inside".to_vec(),
+        };
+        let mut buf = Vec::new();
+        write_entry_csv(&mut buf, &entry).unwrap();
+        assert_eq!(
+            buf,
+            b"11,\"2026-01-29 12:00:00 UTC\",1769688000000,\"has \"\"quotes\"\" inside\"\n"
+        );
+    }
+
+    #[test]
+    fn test_format_csv_binary() {
+        let entry =
+            Entry { lsn: 12, timestamp_ms: 1_769_688_000_000, data: vec![0xDE, 0xAD, 0xBE, 0xEF] };
+        let mut buf = Vec::new();
+        write_entry_csv(&mut buf, &entry).unwrap();
+        assert_eq!(buf, b"12,\"2026-01-29 12:00:00 UTC\",1769688000000,\"[hex:deadbeef]\"\n");
+    }
+
+    #[test]
+    fn test_format_text() {
+        let entry =
+            Entry { lsn: 5, timestamp_ms: 1_769_688_000_000, data: b"log message".to_vec() };
+        let mut buf = Vec::new();
+        write_entry_text(&mut buf, &entry).unwrap();
+        assert_eq!(buf, b"[5] 2026-01-29 12:00:00 UTC log message\n");
+    }
+
+    #[test]
+    fn test_format_hex() {
+        let entry = Entry { lsn: 256, timestamp_ms: 1_769_688_000_000, data: vec![0xCA, 0xFE] };
+        let mut buf = Vec::new();
+        write_entry_hex(&mut buf, &entry).unwrap();
+        assert_eq!(buf, b"0000000000000100 0000019c099fe600 cafe\n");
+    }
+}

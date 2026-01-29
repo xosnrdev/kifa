@@ -1,10 +1,21 @@
 #![warn(clippy::pedantic)]
-#![allow(unused)]
 
+mod cmd;
 mod config;
 mod ingester;
+mod query;
 mod source;
 
-fn main() {
-    println!("Hello, world!");
+use std::process::ExitCode;
+
+use crate::cmd::run;
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("error: {e:?}");
+            ExitCode::FAILURE
+        }
+    }
 }

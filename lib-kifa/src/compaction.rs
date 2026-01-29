@@ -285,22 +285,22 @@ pub fn commit_compaction(
     })
 }
 
-pub fn compact_sstables(
-    dir: &Path,
-    inputs: &[SstableEntry],
-    manifest: &mut Manifest,
-) -> Result<CompactionResult, Error> {
-    let output = run_compaction(dir, inputs)?;
-    commit_compaction(manifest, output)
-}
-
 #[cfg(test)]
 mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::memtable::{Entry, Memtable};
+    use crate::memtable::Memtable;
     use crate::sstable::flush_memtable;
+
+    fn compact_sstables(
+        dir: &Path,
+        inputs: &[SstableEntry],
+        manifest: &mut Manifest,
+    ) -> Result<CompactionResult, Error> {
+        let output = run_compaction(dir, inputs)?;
+        commit_compaction(manifest, output)
+    }
 
     fn create_sstable(dir: &Path, lsn_start: u64, count: u64) -> SstableEntry {
         let mut memtable = Memtable::new();

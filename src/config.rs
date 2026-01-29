@@ -268,7 +268,7 @@ impl PartialConfig {
         };
 
         let sources = SourcesConfig {
-            stdin: self.stdin.unwrap_or(false),
+            stdin: self.stdin.unwrap_or_default(),
             files: self.files.unwrap_or_default(),
             tcp: self.tcp.unwrap_or_default(),
             udp: self.udp.unwrap_or_default(),

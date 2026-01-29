@@ -16,9 +16,9 @@ pub mod memtable;
 pub(crate) mod sstable;
 pub(crate) mod wal;
 
-pub const KIBI: usize = 1024; // 1KB
+pub const KIBI: usize = 1024; // 1KiB
 
-pub const MEBI: usize = KIBI * KIBI; // 1MB
+pub const MEBI: usize = KIBI * KIBI; // 1MiB
 
 pub mod common {
     use std::path::{Path, PathBuf};

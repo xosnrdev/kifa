@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::KIBI;
 
-pub const SECTOR_SIZE: usize = 4 * KIBI; // 4KB
+pub const SECTOR_SIZE: usize = 4 * KIBI; // 4KiB
 
 pub const VERSION: u32 = 1;
 

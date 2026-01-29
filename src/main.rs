@@ -1,6 +1,7 @@
 #![warn(clippy::pedantic)]
 #![allow(unused)]
 
+mod config;
 mod ingester;
 mod source;
 

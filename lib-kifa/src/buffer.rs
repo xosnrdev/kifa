@@ -1,6 +1,6 @@
 //! Sector-aligned memory buffers for direct I/O.
 //!
-//! Linux's `O_DIRECT` flag requires buffers aligned to the filesystem's sector size (4KB).
+//! Linux's `O_DIRECT` flag requires buffers aligned to the filesystem's sector size (4KiB).
 //! Rust's `Vec<u8>` only guarantees 1-byte alignment, and there's no safe stdlib API for
 //! custom-aligned allocations. We use `std::alloc::Layout` directly to satisfy this constraint.
 

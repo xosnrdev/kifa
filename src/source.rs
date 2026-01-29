@@ -116,7 +116,7 @@ impl Source for StdinSource {
     fn run(self, handle: IngesterHandle) -> Result<(), Error> {
         let stdin = io::stdin();
         let reader = BufReader::with_capacity(LINE_BUFFER_CAPACITY, stdin.lock());
-        let prefix: &[u8] = b"[stdin] ";
+        let prefix = b"[stdin] ";
 
         for line_result in reader.lines() {
             if self.shutdown.load(Ordering::Relaxed) {

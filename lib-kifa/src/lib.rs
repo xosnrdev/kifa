@@ -3,18 +3,17 @@
     clippy::missing_errors_doc,
     clippy::missing_panics_doc,
     clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    unused
+    clippy::cast_possible_wrap
 )]
 
-pub(crate) mod buffer;
-pub(crate) mod compaction;
+mod buffer;
+mod compaction;
 pub mod engine;
-pub(crate) mod helpers;
-pub(crate) mod manifest;
-pub mod memtable;
-pub(crate) mod sstable;
-pub(crate) mod wal;
+mod helpers;
+mod manifest;
+mod memtable;
+mod sstable;
+mod wal;
 
 pub const KIBI: usize = 1024; // 1KiB
 
@@ -79,4 +78,45 @@ pub enum FlushMode {
     ///
     /// Like `Cautious`, but also pauses background compaction to reduce I/O.
     Emergency,
+}
+
+/// A single log entry retrieved from storage.
+///
+/// Each entry represents one [`StorageEngine::append`] call that was successfully persisted.
+/// Entries are immutable once written and maintain strict LSN ordering.
+///
+/// # Fields
+///
+/// - `lsn`: Log sequence number, monotonically increasing across all entries.
+/// - `timestamp_ms`: Unix timestamp in milliseconds when the entry was written.
+/// - `data`: The raw bytes that were appended.
+///
+/// [`StorageEngine::append`]: crate::engine::StorageEngine::append
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Entry {
+    /// Log sequence number assigned at write time.
+    ///
+    /// LSNs are globally unique and strictly increasing across all entries.
+    pub lsn: u64,
+
+    /// Unix timestamp in milliseconds when the entry was persisted.
+    ///
+    /// Wall-clock time from the writing process, not a logical clock.
+    /// The `lsn` field provides ordering guarantees.
+    pub timestamp_ms: u64,
+
+    /// The raw payload bytes, stored as-is without interpretation.
+    pub data: Vec<u8>,
+}
+
+impl Entry {
+    /// Returns the in-memory size of this entry in bytes.
+    ///
+    /// Includes the LSN (8 bytes), timestamp (8 bytes), and data length.
+    /// This is the logical size, not the on-disk size which includes
+    /// checksums and alignment padding.
+    #[must_use]
+    pub const fn size_bytes(&self) -> usize {
+        size_of::<u64>() + size_of::<u64>() + self.data.len()
+    }
 }

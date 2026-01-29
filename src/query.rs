@@ -19,8 +19,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lib_kifa::common::{atomic_rename, temp_path};
 use lib_kifa::engine::{Config, Stats, StorageEngine};
-use lib_kifa::memtable::Entry;
-use lib_kifa::{engine, map_err};
+use lib_kifa::{Entry, engine, map_err};
 
 #[derive(Debug)]
 pub enum Error {

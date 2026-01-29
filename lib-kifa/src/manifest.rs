@@ -321,11 +321,6 @@ impl Manifest {
     pub const fn sstable_count(&self) -> usize {
         self.sstables.len()
     }
-
-    #[must_use]
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
 }
 
 pub fn cleanup_temp_manifests(dir: &Path) -> Result<usize, Error> {

@@ -108,11 +108,7 @@ struct DaemonCmd {
     #[arg(long, action = ArgAction::Append, help = "Listen on UDP address (e.g., 127.0.0.1:5000)")]
     udp: Vec<String>,
 
-    #[arg(
-        long,
-        value_enum,
-        help = "Durability: normal (batch), cautious (each write), emergency (immediate)"
-    )]
+    #[arg(long, value_enum, default_value = "normal", help = "WAL flush mode")]
     flush_mode: Option<FlushModeArg>,
 
     #[arg(long, help = "WAL segment size in bytes")]

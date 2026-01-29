@@ -19,10 +19,10 @@ use std::{fmt, io};
 use crate::compaction::{self, commit_compaction, prepare_compaction, run_compaction};
 use crate::helpers::HeapEntry;
 use crate::manifest::{self, Manifest, SstableEntry};
-use crate::memtable::{Entry, Memtable};
+use crate::memtable::Memtable;
 use crate::sstable::{self, SstableInfo, SstableIter, SstableReader};
 use crate::wal::{self, Wal, WalStats};
-use crate::{FlushMode, MEBI, map_err};
+use crate::{Entry, FlushMode, MEBI, map_err};
 
 const DEFAULT_MEMTABLE_FLUSH_THRESHOLD: usize = 4 * MEBI;
 const DEFAULT_COMPACTION_THRESHOLD: usize = 4;
@@ -918,7 +918,17 @@ fn compaction_loop(
         }
 
         let mut guard = inner.lock().unwrap_or_else(sync::PoisonError::into_inner);
-        let _ = commit_compaction(&mut guard.manifest, output);
+        if let Ok(result) = commit_compaction(&mut guard.manifest, output) {
+            eprintln!(
+                "Compacted {} SSTables into {}: {} entries, LSN {}-{}, removed {} files",
+                result.input_count,
+                result.output_path.display(),
+                result.entry_count,
+                result.min_lsn,
+                result.max_lsn,
+                result.removed_paths.len()
+            );
+        }
     }
 }
 

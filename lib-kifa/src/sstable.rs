@@ -11,8 +11,8 @@ use std::{fmt, fs};
 
 use crate::common::{atomic_rename, temp_path};
 use crate::helpers::{VERSION, sync_file};
-use crate::memtable::{Entry, Memtable};
-use crate::{MEBI, map_err};
+use crate::memtable::Memtable;
+use crate::{Entry, MEBI, map_err};
 
 pub const MAGIC_HEADER: u64 = 0x5851_F42D_4C95_7F2D;
 const MAGIC_FOOTER: u64 = 0x27BB_2EE6_87B0_B0FD;
@@ -128,6 +128,7 @@ impl Footer {
         buf
     }
 
+    #[cfg(test)]
     const fn from_bytes(bytes: [u8; FOOTER_SIZE]) -> Self {
         Self {
             data_crc: u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
@@ -139,6 +140,7 @@ impl Footer {
         }
     }
 
+    #[cfg(test)]
     const fn validate(&self, expected_crc: u32) -> Result<(), Error> {
         if self.magic != MAGIC_FOOTER {
             return Err(Error::InvalidMagic);
@@ -265,18 +267,18 @@ impl SstableReader {
         Ok(Self { reader, header, hasher: crc32fast::Hasher::new(), entries_read: 0 })
     }
 
-    #[must_use]
-    pub const fn entry_count(&self) -> u32 {
+    #[cfg(test)]
+    const fn entry_count(&self) -> u32 {
         self.header.entry_count
     }
 
-    #[must_use]
-    pub const fn min_lsn(&self) -> u64 {
+    #[cfg(test)]
+    const fn min_lsn(&self) -> u64 {
         self.header.min_lsn
     }
 
-    #[must_use]
-    pub const fn max_lsn(&self) -> u64 {
+    #[cfg(test)]
+    const fn max_lsn(&self) -> u64 {
         self.header.max_lsn
     }
 
@@ -314,7 +316,8 @@ impl SstableReader {
         Ok(Some(Entry { lsn, timestamp_ms, data }))
     }
 
-    pub fn validate_footer(mut self) -> Result<(), Error> {
+    #[cfg(test)]
+    fn validate_footer(mut self) -> Result<(), Error> {
         while self.read_entry()?.is_some() {}
 
         let computed_crc = self.hasher.finalize();
@@ -326,6 +329,7 @@ impl SstableReader {
         footer.validate(computed_crc)
     }
 
+    #[cfg(test)]
     pub fn into_entries(mut self) -> Result<Vec<Entry>, Error> {
         let mut entries = Vec::with_capacity(self.header.entry_count as usize);
 
@@ -368,23 +372,6 @@ impl SstableIter {
     #[must_use]
     pub fn take_error(&mut self) -> Option<Error> {
         self.error.take()
-    }
-
-    pub fn validate_crc(mut self) -> Result<(), Error> {
-        while self.next().is_some() {}
-
-        if let Some(e) = self.error {
-            return Err(e);
-        }
-
-        let computed_crc = self.reader.hasher.finalize();
-
-        let mut footer_bytes = [0; FOOTER_SIZE];
-        if let Err(e) = self.reader.reader.read_exact(&mut footer_bytes) {
-            return Err(Error::Io(e));
-        }
-
-        Footer::from_bytes(footer_bytes).validate(computed_crc)
     }
 }
 

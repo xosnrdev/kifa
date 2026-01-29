@@ -12,8 +12,8 @@ use std::os::unix::{fs::OpenOptionsExt, io::AsRawFd};
 #[cfg(windows)]
 use std::os::windows::fs::FileExt;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{self, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fmt, io};
 
@@ -152,14 +152,6 @@ impl EntryFooter {
     }
 }
 
-#[derive(Debug)]
-pub struct RecoveryReport {
-    pub recovered_count: usize,
-    pub first_lsn: Option<u64>,
-    pub last_lsn: Option<u64>,
-    pub stopped_at_offset: u64,
-}
-
 /// Statistics about the write-ahead log.
 #[derive(Debug, Clone, Copy)]
 pub struct WalStats {
@@ -266,7 +258,6 @@ pub struct RecoveredEntry {
     pub lsn: u64,
     pub timestamp_ms: u64,
     pub data: Vec<u8>,
-    pub offset: u64,
 }
 
 fn scan_segment(path: &Path) -> Result<(Vec<RecoveredEntry>, u64), Error> {
@@ -341,7 +332,7 @@ fn scan_segment(path: &Path) -> Result<(Vec<RecoveredEntry>, u64), Error> {
             break;
         }
 
-        entries.push(RecoveredEntry { lsn, timestamp_ms, data, offset });
+        entries.push(RecoveredEntry { lsn, timestamp_ms, data });
 
         offset += aligned_entry_size as u64;
     }
@@ -497,7 +488,7 @@ impl Wal {
         let lsn = self.next_lsn.fetch_add(1, Ordering::SeqCst);
         let timestamp_ms =
             SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
-        let mut writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut writer = self.writer.lock().unwrap_or_else(sync::PoisonError::into_inner);
 
         let total_size = ENTRY_OVERHEAD + data.len();
         let aligned_size = total_size.next_multiple_of(SECTOR_SIZE);
@@ -517,7 +508,7 @@ impl Wal {
 
     #[cfg(target_os = "linux")]
     fn sync_for_mode(&self, writer: &SegmentWriter) {
-        let mode = *self.flush_mode.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mode = *self.flush_mode.lock().unwrap_or_else(sync::PoisonError::into_inner);
         match mode {
             FlushMode::Emergency | FlushMode::Cautious => writer.sync(),
             FlushMode::Normal => {
@@ -536,7 +527,7 @@ impl Wal {
     }
 
     pub fn sync(&self) {
-        let writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let writer = self.writer.lock().unwrap_or_else(sync::PoisonError::into_inner);
         writer.sync();
         self.pending_syncs.store(0, Ordering::SeqCst);
 
@@ -547,7 +538,7 @@ impl Wal {
     }
 
     pub fn stats(&self) -> WalStats {
-        let mode = *self.flush_mode.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mode = *self.flush_mode.lock().unwrap_or_else(sync::PoisonError::into_inner);
 
         WalStats {
             next_lsn: self.next_lsn.load(Ordering::SeqCst),
@@ -557,42 +548,17 @@ impl Wal {
     }
 
     pub fn set_flush_mode(&self, mode: FlushMode) {
-        *self.flush_mode.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = mode;
+        *self.flush_mode.lock().unwrap_or_else(sync::PoisonError::into_inner) = mode;
         if mode == FlushMode::Emergency {
             self.sync();
         }
-    }
-
-    pub fn recover(dir: &Path) -> Result<RecoveryReport, Error> {
-        let segments = discover_segments(dir)?;
-
-        let mut recovered_count = 0;
-        let mut first_lsn = None;
-        let mut last_lsn = None;
-        let mut stopped_at_offset = 0;
-
-        for path in segments {
-            let (entries, offset) = scan_segment(&path)?;
-            recovered_count += entries.len();
-            if let Some(entry) = entries.first()
-                && first_lsn.is_none()
-            {
-                first_lsn = Some(entry.lsn);
-            }
-            if let Some(entry) = entries.last() {
-                last_lsn = Some(entry.lsn);
-            }
-            stopped_at_offset = offset;
-        }
-
-        Ok(RecoveryReport { recovered_count, first_lsn, last_lsn, stopped_at_offset })
     }
 
     pub fn truncate_log(&self, checkpoint_lsn: u64) -> Result<usize, Error> {
         let segments = discover_segments(&self.dir)?;
         let mut deleted_count = 0;
 
-        let writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let writer = self.writer.lock().unwrap_or_else(sync::PoisonError::into_inner);
         let current_sequence = writer.sequence;
         drop(writer);
 
@@ -608,7 +574,7 @@ impl Wal {
             let max_lsn_in_segment = entries.iter().map(|e| e.lsn).max().unwrap_or_default();
 
             if max_lsn_in_segment <= checkpoint_lsn {
-                std::fs::remove_file(&path)?;
+                fs::remove_file(&path)?;
                 deleted_count += 1;
             }
         }
@@ -638,6 +604,35 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    struct RecoveryReport {
+        recovered_count: usize,
+        first_lsn: Option<u64>,
+        last_lsn: Option<u64>,
+    }
+
+    fn recover(dir: &Path) -> Result<RecoveryReport, Error> {
+        let segments = discover_segments(dir)?;
+
+        let mut recovered_count = 0;
+        let mut first_lsn = None;
+        let mut last_lsn = None;
+
+        for path in segments {
+            let (entries, _) = scan_segment(&path)?;
+            recovered_count += entries.len();
+            if let Some(entry) = entries.first()
+                && first_lsn.is_none()
+            {
+                first_lsn = Some(entry.lsn);
+            }
+            if let Some(entry) = entries.last() {
+                last_lsn = Some(entry.lsn);
+            }
+        }
+
+        Ok(RecoveryReport { recovered_count, first_lsn, last_lsn })
+    }
 
     #[test]
     fn test_entry_header_crc() {
@@ -680,7 +675,7 @@ mod tests {
             wal.sync();
         }
 
-        let report = Wal::recover(dir.path()).unwrap();
+        let report = recover(dir.path()).unwrap();
         assert_eq!(report.recovered_count, 3);
         assert_eq!(report.last_lsn, Some(3));
     }
@@ -711,7 +706,7 @@ mod tests {
         wal.append(b"baz").unwrap();
         wal.sync();
 
-        let report = Wal::recover(dir.path()).unwrap();
+        let report = recover(dir.path()).unwrap();
         assert_eq!(report.recovered_count, 3);
     }
 
@@ -726,7 +721,7 @@ mod tests {
         wal.sync();
         drop(wal);
 
-        let report = Wal::recover(dir.path()).unwrap();
+        let report = recover(dir.path()).unwrap();
         assert_eq!(report.first_lsn, Some(1));
         assert_eq!(report.last_lsn, Some(3));
         assert_eq!(report.recovered_count, 3);
@@ -858,7 +853,7 @@ mod tests {
         assert_eq!(lsn, 1, "LSN should start at 1 after reopening empty segment");
         wal.sync();
 
-        let report = Wal::recover(dir.path()).unwrap();
+        let report = recover(dir.path()).unwrap();
         assert_eq!(report.recovered_count, 1);
         assert_eq!(report.first_lsn, Some(1));
     }

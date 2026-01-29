@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::fs::File;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::KIBI;
 

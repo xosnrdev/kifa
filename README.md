@@ -21,10 +21,10 @@ This project is currently under active development. Use the checklist below to t
     - [x] File tailing
     - [x] TCP socket
     - [x] UDP socket
-  - [ ] Query/Export Interface for data retrieval
-    - [ ] LSN-range queries
-    - [ ] Time-range queries
-    - [ ] Export to TEXT, JSON, CSV, HEX formats
+  - [x] Query/Export Interface for data retrieval
+    - [x] LSN-range queries
+    - [x] Time-range queries
+    - [x] Export to TEXT, JSON, CSV, HEX formats
   - [x] Configuration / Flags for customizing behavior
     - [x] Storage paths
     - [x] Performance tuning options

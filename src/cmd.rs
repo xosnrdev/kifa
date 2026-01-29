@@ -22,8 +22,8 @@ use std::{io, thread};
 use anyhow::{Context, Result, bail};
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use clap_cargo::style::CLAP_STYLING;
-use lib_kifa::FlushMode;
 use lib_kifa::engine::{Config, RecoveryReport, StorageEngine};
+use lib_kifa::{FlushMode, MEBI};
 #[cfg(windows)]
 use signal_hook::consts::signal::SIGINT;
 #[cfg(unix)]
@@ -111,11 +111,11 @@ struct DaemonCmd {
     #[arg(long, value_enum, default_value = "normal", help = "WAL flush mode")]
     flush_mode: Option<FlushModeArg>,
 
-    #[arg(long, help = "WAL segment size in bytes")]
-    segment_size: Option<usize>,
+    #[arg(long, help = "WAL segment size in MiB")]
+    segment_size_mib: Option<usize>,
 
-    #[arg(long, help = "Flush memtable to SSTable after this many bytes")]
-    memtable_threshold: Option<usize>,
+    #[arg(long, help = "Flush memtable to SSTable after this many MiB")]
+    memtable_threshold_mib: Option<usize>,
 
     #[arg(long, conflicts_with = "no_compaction", help = "Compact after this many SSTables")]
     compaction_threshold: Option<usize>,
@@ -195,11 +195,11 @@ fn build_partial_config(cli: &Cli, daemon: Option<&DaemonCmd>) -> PartialConfig 
     // Flags and empty vectors map to None so the config layer treats them as unspecified.
     // This preserves three-layer precedence: CLI flags override file settings only when present.
     if let Some(d) = daemon {
-        partial.memtable_flush_threshold = d.memtable_threshold;
+        partial.memtable_flush_threshold = d.memtable_threshold_mib.map(|v| v * MEBI);
         partial.compaction_threshold = d.compaction_threshold;
         partial.compaction_enabled = if d.no_compaction { Some(false) } else { None };
         partial.flush_mode = d.flush_mode.map(FlushMode::from);
-        partial.segment_size = d.segment_size;
+        partial.segment_size = d.segment_size_mib.map(|v| v * MEBI);
         partial.channel_capacity = d.channel_capacity;
         partial.stdin = if d.stdin { Some(true) } else { None };
         partial.files = if d.file.is_empty() { None } else { Some(d.file.clone()) };
@@ -248,8 +248,8 @@ fn resolve_command(cli: &Cli) -> Result<ResolvedCommand> {
                 tcp: Vec::new(),
                 udp: Vec::new(),
                 flush_mode: None,
-                segment_size: None,
-                memtable_threshold: None,
+                segment_size_mib: None,
+                memtable_threshold_mib: None,
                 compaction_threshold: None,
                 no_compaction: false,
                 channel_capacity: None,

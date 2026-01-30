@@ -54,10 +54,15 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EntryTooLarge { size, max } => {
-                write!(f, "entry too large: {size} bytes (max {max})")
+                write!(f, "entry too large: {} MiB (max {} MiB)", size / MEBI, max / MEBI)
             }
             Self::SegmentFull { available, required } => {
-                write!(f, "segment full: {available} available, {required} required")
+                write!(
+                    f,
+                    "segment full: {} MiB available, {} MiB required",
+                    available / MEBI,
+                    required / MEBI
+                )
             }
             Self::Io(e) => write!(f, "{e}"),
             Self::PreallocationFailed(e) => write!(f, "preallocation failed: {e}"),
@@ -495,6 +500,7 @@ impl Wal {
 
         if aligned_size > writer.remaining_space() {
             let new_seq = writer.sequence + 1;
+            log::debug!("WAL segment rotated: sequence {} -> {}", writer.sequence, new_seq);
             writer.sync();
             *writer = SegmentWriter::new(&self.dir, new_seq)?;
         }
@@ -581,6 +587,9 @@ impl Wal {
 
         if deleted_count > 0 {
             sync_dir_path(&self.dir)?;
+            log::debug!(
+                "WAL truncated: {deleted_count} segments removed, checkpoint LSN {checkpoint_lsn}"
+            );
         }
 
         Ok(deleted_count)

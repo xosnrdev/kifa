@@ -19,7 +19,7 @@ use crate::sstable::{
     Footer, HEADER_SIZE, Header, MAGIC_HEADER, MAX_ENTRY_SIZE, SstableIter, SstableReader,
     sstable_name,
 };
-use crate::{map_err, sstable};
+use crate::{MEBI, map_err, sstable};
 
 #[derive(Debug)]
 pub enum Error {
@@ -42,7 +42,7 @@ impl fmt::Display for Error {
             Self::Manifest(e) => write!(f, "manifest: {e}"),
             Self::NoInputSstables => write!(f, "no input sstables"),
             Self::EntryTooLarge { size, max } => {
-                write!(f, "entry too large: {size} bytes (max {max})")
+                write!(f, "entry too large: {} MiB (max {} MiB)", size / MEBI, max / MEBI)
             }
         }
     }

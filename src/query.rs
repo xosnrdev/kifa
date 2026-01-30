@@ -236,7 +236,7 @@ pub fn run_export(options: &QueryOptions) -> Result<u64, Error> {
     // Disarm after rename succeeds because the temp file no longer exists at its original path.
     guard.disarm();
 
-    eprintln!("Exported {count} entries to {}", output_path.display());
+    log::info!("Exported {count} entries to {}", output_path.display());
     Ok(count)
 }
 

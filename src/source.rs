@@ -90,6 +90,7 @@ fn tag_and_send(
         match handle.try_send(tagged) {
             Ok(()) => return Ok(false),
             Err(ingester::SendError::Full(returned)) => {
+                log::debug!("Backpressure: channel full, retrying after {backoff:?}");
                 tagged = returned;
                 thread::sleep(backoff);
                 backoff = (backoff * 2).min(BACKOFF_MAX);

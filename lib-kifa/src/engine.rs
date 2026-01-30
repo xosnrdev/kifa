@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{self, Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
-use std::{fmt, io};
+use std::{fmt, io, vec};
 
 use crate::compaction::{self, commit_compaction, prepare_compaction, run_compaction};
 use crate::helpers::HeapEntry;
@@ -271,9 +271,7 @@ struct CompactionState {
 ///
 /// # Panics
 ///
-/// Panics if fsync fails with an I/O error. This is intentional — a failed
-/// fsync means data may not be durable, and continuing could cause silent
-/// data loss.
+/// Panics if fsync fails with an I/O error to prevent silent data loss.
 pub struct StorageEngine {
     dir: PathBuf,
     wal: Wal,
@@ -403,8 +401,7 @@ impl StorageEngine {
     ///
     /// # Panics
     ///
-    /// Panics if fsync fails. This is intentional — continuing after fsync
-    /// failure could cause silent data loss.
+    /// Panics if fsync fails to prevent silent data loss.
     pub fn append(&self, data: &[u8]) -> Result<u64, Error> {
         let mut inner = self.inner.lock().unwrap_or_else(sync::PoisonError::into_inner);
 
@@ -456,7 +453,7 @@ impl StorageEngine {
     /// # use std::path::Path;
     /// # use lib_kifa::engine::{StorageEngine, Config};
     /// # use lib_kifa::FlushMode;
-    /// # let (engine, _) = StorageEngine::open(Path::new("/tmp/test"), Config::default()).unwrap();
+    /// # let (engine, _) = StorageEngine::open(Path::new("/data"), Config::default()).unwrap();
     /// // Cautious mode syncs every write during normal operation.
     /// engine.set_flush_mode(FlushMode::Cautious);
     ///
@@ -467,9 +464,11 @@ impl StorageEngine {
         self.wal.set_flush_mode(mode);
 
         if matches!(mode, FlushMode::Emergency) {
+            log::warn!("Flush mode set to Emergency: compaction paused, memtable flushing");
             self.compaction.emergency.store(true, Ordering::Release);
             let _ = self.flush_internal();
         } else {
+            log::info!("Flush mode set to {mode:?}");
             self.compaction.emergency.store(false, Ordering::Release);
             self.notify_compaction();
         }
@@ -524,13 +523,13 @@ impl StorageEngine {
             inner.manifest.register_sstable(info.path.clone(), info.min_lsn, info.max_lsn);
 
         if let Err(e) = manifest_result {
-            let _ = std::fs::remove_file(&sstable_path);
+            let _ = fs::remove_file(&sstable_path);
             inner.memtable.unfreeze();
             return Err(e.into());
         }
 
         if let Err(e) = inner.manifest.save() {
-            let _ = std::fs::remove_file(&sstable_path);
+            let _ = fs::remove_file(&sstable_path);
             inner.memtable.unfreeze();
             return Err(e.into());
         }
@@ -540,6 +539,14 @@ impl StorageEngine {
         let _ = self.wal.truncate_log(checkpoint_lsn);
 
         inner.memtable = Memtable::new();
+
+        log::info!(
+            "Memtable flushed: {} entries, LSN {}-{}, path {}",
+            info.entry_count,
+            info.min_lsn,
+            info.max_lsn,
+            info.path.display()
+        );
 
         self.notify_compaction();
 
@@ -609,7 +616,7 @@ impl StorageEngine {
     /// ```no_run
     /// # use std::path::Path;
     /// # use lib_kifa::engine::{StorageEngine, Config};
-    /// # let (engine, _) = StorageEngine::open(Path::new("/tmp/test"), Config::default()).unwrap();
+    /// # let (engine, _) = StorageEngine::open(Path::new("/data"), Config::default()).unwrap();
     /// let snapshot = engine.snapshot();
     ///
     /// // The snapshot captures state at creation time; later writes are invisible.
@@ -624,13 +631,13 @@ impl StorageEngine {
     pub fn snapshot(&self) -> ReadSnapshot {
         let inner = self.inner.lock().unwrap_or_else(sync::PoisonError::into_inner);
 
-        let memtable_entries: Vec<Entry> = inner
+        let memtable_entries: Vec<_> = inner
             .memtable
             .iter()
             .map(|e| Entry { lsn: e.lsn, timestamp_ms: e.timestamp_ms, data: e.data.clone() })
             .collect();
 
-        let sstable_entries: Vec<SstableEntry> = inner.manifest.sstables().to_vec();
+        let sstable_entries = inner.manifest.sstables().to_vec();
 
         ReadSnapshot { memtable_entries: Arc::new(memtable_entries), sstable_entries }
     }
@@ -728,7 +735,7 @@ impl ReadSnapshot {
 
 impl IntoIterator for ReadSnapshot {
     type Item = Entry;
-    type IntoIter = std::vec::IntoIter<Entry>;
+    type IntoIter = vec::IntoIter<Entry>;
 
     fn into_iter(self) -> Self::IntoIter {
         match self.merge_iter() {
@@ -847,9 +854,8 @@ impl Iterator for MergeIter {
         }
 
         let Reverse(entry) = self.heap.pop()?;
-        let source_idx = entry.source_idx;
 
-        self.advance_source(source_idx);
+        self.advance_source(entry.source_idx);
 
         Some(Entry { lsn: entry.lsn, timestamp_ms: entry.timestamp_ms, data: entry.data })
     }
@@ -896,6 +902,7 @@ fn compaction_loop(
         }
 
         if emergency.load(Ordering::Acquire) {
+            log::warn!("Compaction paused: emergency mode active");
             continue;
         }
 
@@ -908,8 +915,12 @@ fn compaction_loop(
             continue;
         };
 
-        let Ok(output) = run_compaction(dir, &inputs) else {
-            continue;
+        let output = match run_compaction(dir, &inputs) {
+            Ok(output) => output,
+            Err(e) => {
+                log::error!("Compaction failed: {e}");
+                continue;
+            }
         };
 
         // Rechecks shutdown after the potentially long-running compaction completes.
@@ -919,7 +930,7 @@ fn compaction_loop(
 
         let mut guard = inner.lock().unwrap_or_else(sync::PoisonError::into_inner);
         if let Ok(result) = commit_compaction(&mut guard.manifest, output) {
-            eprintln!(
+            log::info!(
                 "Compacted {} SSTables into {}: {} entries, LSN {}-{}, removed {} files",
                 result.input_count,
                 result.output_path.display(),
@@ -955,8 +966,7 @@ fn cleanup_orphan_sstables(dir: &Path, manifest: &Manifest) -> Result<usize, Err
     let mut cleaned = 0;
 
     for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
+        let path = entry?.path();
 
         if path.extension().and_then(|s| s.to_str()).is_some_and(|ext| ext == "sst")
             && !registered_paths.contains(&&path)

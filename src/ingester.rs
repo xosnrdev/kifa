@@ -18,8 +18,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender, TrySendError};
 use std::time::Duration;
 
-use lib_kifa::FlushMode;
 use lib_kifa::engine::StorageEngine;
+use lib_kifa::{FlushMode, MEBI};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -105,7 +105,8 @@ impl Ingester {
                 stats.entries_ingested += 1;
                 stats.bytes_ingested += len;
             }
-            Err(_) => {
+            Err(e) => {
+                log::error!("Append failed ({} MiB): {e}", len as usize / MEBI);
                 stats.entries_failed += 1;
             }
         }

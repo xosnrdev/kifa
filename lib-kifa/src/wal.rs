@@ -57,7 +57,12 @@ impl fmt::Display for Error {
                 write!(f, "entry too large: {} MiB (max {} MiB)", size / MEBI, max / MEBI)
             }
             Self::SegmentFull { available, required } => {
-                write!(f, "segment full: {available} available, {required} required")
+                write!(
+                    f,
+                    "segment full: {} MiB available, {} MiB required",
+                    available / MEBI,
+                    required / MEBI
+                )
             }
             Self::Io(e) => write!(f, "{e}"),
             Self::PreallocationFailed(e) => write!(f, "preallocation failed: {e}"),

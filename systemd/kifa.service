@@ -1,0 +1,74 @@
+[Unit]
+Description=Kifa — crash-proof local logging system
+Documentation=https://github.com/xosnrdev/kifa
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/kifa daemon
+
+# Logging filter (env_logger syntax: debug, info, warn, error, or module-specific).
+#Environment=KIFA_LOG=info
+
+# Required. Storage directory for WAL, SSTables, and metadata.
+# StateDirectory=kifa creates /var/lib/kifa owned by the dynamic user.
+Environment=KIFA_DATA_DIR=/var/lib/kifa
+
+# WAL sync strategy: normal, cautious, or emergency.
+#Environment=KIFA_FLUSH_MODE=normal
+
+# WAL segment size in MiB (minimum 1, must be 4 KiB-aligned).
+#Environment=KIFA_SEGMENT_SIZE_MIB=16
+
+# Flush memtable to SSTable after this many MiB (minimum 1).
+#Environment=KIFA_MEMTABLE_FLUSH_THRESHOLD_MIB=4
+
+# Compact after this many SSTables (minimum 2).
+#Environment=KIFA_COMPACTION_THRESHOLD=4
+
+# Enable or disable background compaction.
+#Environment=KIFA_COMPACTION_ENABLED=true
+
+# Internal ingester channel buffer size (minimum 1).
+#Environment=KIFA_CHANNEL_CAPACITY=1024
+
+# Read log lines from standard input.
+#Environment=KIFA_STDIN=false
+
+# Comma-separated file paths to tail.
+#Environment=KIFA_FILES=
+
+# Comma-separated TCP listen addresses (e.g., 127.0.0.1:5514).
+#Environment=KIFA_TCP=
+
+# Comma-separated UDP listen addresses (e.g., 127.0.0.1:5515).
+#Environment=KIFA_UDP=
+
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening
+DynamicUser=yes
+StateDirectory=kifa
+
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

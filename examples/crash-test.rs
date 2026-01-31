@@ -301,7 +301,7 @@ fn parse_stats_output(output: &str) -> StatsResult {
 /// Verifies the integrity of the database after a crash cycle.
 ///
 /// Checks two critical invariants:
-/// 1. No gaps exist in the entry sequence (fsynced entries should be contiguous).
+/// 1. No gaps exist in the entry sequence (fsync'd entries should be contiguous).
 /// 2. Entry count is monotonically non-decreasing (data should not be lost).
 ///
 /// Violations of either invariant indicate corruption or data loss.

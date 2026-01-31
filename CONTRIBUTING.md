@@ -20,28 +20,37 @@ and pull requests will vary. All participants are expected to follow the
 Kifa requires the Rust nightly toolchain. The minimum supported version is
 1.93.0, pinned in `rust-toolchain.toml`.
 
+The project uses aliased commands configured in [.cargo/config.toml](./.cargo/config.toml) to streamline the development workflow.
+
 ```sh
 git clone https://github.com/xosnrdev/kifa.git
 cd kifa
 cargo build --workspace
-cargo test --workspace
+cargo tw
 ```
 
-To run the full CI check locally before pushing:
+The following commands perform the full CI checks locally before pushing:
 
 ```sh
-cargo fmt --all -- --check
-cargo clippy --workspace -- --deny warnings -W clippy::pedantic
-cargo test --workspace
+# Performs a format check.
+cargo fc
+# Runs clippy linting.
+cargo cw
+# Runs unit and integration tests.
+cargo tw
+# Runs documentation tests.
+cargo twdoc
 ```
+
+The crash test simulates POS crash scenarios. Run it with `cargo ct`.
 
 ## Code quality standards
 
 Every pull request must pass these CI gates:
 
-1. **Formatting** — `cargo fmt --all -- --check`
-2. **Linting** — `cargo clippy --workspace -- --deny warnings -W clippy::pedantic`
-3. **Tests** — `cargo test --workspace`
+1. **Formatting** — `cargo fc`
+2. **Linting** — `cargo cw`
+3. **Tests** — `cargo tw` and `cargo twdoc`
 
 Code comments follow these conventions:
 

@@ -50,7 +50,9 @@ jobs:
         run: cargo fc
 
       - name: Run tests
-        run: cargo tw
+        run: |
+          cargo tw
+          cargo twdoc
 
       - name: Run clippy
         run: cargo cw

@@ -233,10 +233,10 @@ struct CompactionState {
 ///
 /// When [`append`](Self::append) returns successfully:
 /// - The entry is written to the WAL
-/// - In [`FlushMode::Cautious`] or [`FlushMode::Emergency`], it is also fsynced
+/// - In [`FlushMode::Cautious`] or [`FlushMode::Emergency`], it is also fsync'd
 /// - In [`FlushMode::Normal`], fsync happens within the next 50 writes
 ///
-/// After a crash, all fsynced entries are recovered automatically.
+/// After a crash, all fsync'd entries are recovered automatically.
 ///
 /// # Thread Safety
 ///

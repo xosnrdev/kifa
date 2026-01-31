@@ -30,5 +30,5 @@ This project is currently under active development. Use the checklist below to t
     - [x] Performance tuning options
   - [ ] Web UI for log visualization
 - [ ] Testing & Documentation
-- [ ] Demo
+- [x] Demo
 - [ ] Release & Distribution

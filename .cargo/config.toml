@@ -3,3 +3,10 @@ linker = "aarch64-linux-gnu-gcc"
 
 [target.arm-unknown-linux-gnueabihf]
 linker = "arm-linux-gnueabihf-gcc"
+
+[alias]
+fc = "fmt --all -- --check"
+cw = "clippy --workspace  --all-features --all-targets -- --deny warnings -W clippy::pedantic"
+tw = "test --workspace --all-features --all-targets"
+twdoc = "test --workspace --doc"
+ct = "run --release --example crash-test -- --clean"

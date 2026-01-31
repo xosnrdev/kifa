@@ -163,7 +163,7 @@ pub struct WalStats {
     /// The LSN that will be assigned to the next appended entry.
     pub next_lsn: u64,
 
-    /// The highest LSN that has been fsynced to disk.
+    /// The highest LSN that has been fsync'd to disk.
     ///
     /// Entries with LSN <= this value are guaranteed durable.
     pub last_durable_lsn: u64,

@@ -1,9 +1,6 @@
 <p align="center">
-  <h1 align="center">Kifa</h1>
+  <h1 align="center">Kifa (KEE-fah)</h1>
   <p align="center"><b>Crash-proof local logging for POS and mobile money systems</b></p>
-  <p align="center">
-    <em>KEE-fah • Swahili for "enough" (because losing one transaction is too many)</em>
-  </p>
 </p>
 
 <p align="center">
@@ -294,6 +291,7 @@ All settings can be overridden via environment variables with the `KIFA_` prefix
 | `KIFA_FILES`                        | Comma-separated file paths        |          |
 | `KIFA_TCP`                          | Comma-separated TCP addresses     |          |
 | `KIFA_UDP`                          | Comma-separated UDP addresses     |          |
+| `KIFA_LOG`                          | Log level filter for env_logger   | `info`   |
 
 ### CLI Flags
 

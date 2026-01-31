@@ -299,11 +299,11 @@ fn write_entry_json<W: Write>(writer: &mut W, entry: &Entry) -> io::Result<()> {
     let timestamp = format_timestamp_ms(entry.timestamp_ms);
     write!(
         writer,
-        r#"{{ "lsn":{}, "timestamp":"{}", "timestamp_ms":{}, "data":""#,
+        r#"{{"lsn":{},"timestamp":"{}","timestamp_ms":{},"data":""#,
         entry.lsn, timestamp, entry.timestamp_ms
     )?;
     write_json_escaped_bytes(writer, &entry.data)?;
-    writeln!(writer, r#"" }}"#)
+    writeln!(writer, r#""}}"#)
 }
 
 fn write_entry_csv<W: Write>(writer: &mut W, entry: &Entry) -> io::Result<()> {
@@ -444,7 +444,7 @@ mod tests {
         write_entry_json(&mut buf, &entry).unwrap();
         assert_eq!(
             buf,
-            b"{ \"lsn\":42, \"timestamp\":\"2026-01-29 12:00:00 UTC\", \"timestamp_ms\":1769688000000, \"data\":\"hello world\" }\n"
+            b"{\"lsn\":42,\"timestamp\":\"2026-01-29 12:00:00 UTC\",\"timestamp_ms\":1769688000000,\"data\":\"hello world\"}\n"
         );
     }
 
@@ -459,7 +459,7 @@ mod tests {
         write_entry_json(&mut buf, &entry).unwrap();
         assert_eq!(
             buf,
-            b"{ \"lsn\":1, \"timestamp\":\"2026-01-29 12:00:00 UTC\", \"timestamp_ms\":1769688000000, \"data\":\"line\\nwith\\ttabs\\\"quotes\\\\\" }\n"
+            b"{\"lsn\":1,\"timestamp\":\"2026-01-29 12:00:00 UTC\",\"timestamp_ms\":1769688000000,\"data\":\"line\\nwith\\ttabs\\\"quotes\\\\\"}\n"
         );
     }
 
@@ -471,7 +471,7 @@ mod tests {
         write_entry_json(&mut buf, &entry).unwrap();
         assert_eq!(
             buf,
-            b"{ \"lsn\":99, \"timestamp\":\"2026-01-29 12:00:00 UTC\", \"timestamp_ms\":1769688000000, \"data\":\"\\u0000\\u00ff\\u0080\" }\n"
+            b"{\"lsn\":99,\"timestamp\":\"2026-01-29 12:00:00 UTC\",\"timestamp_ms\":1769688000000,\"data\":\"\\u0000\\u00ff\\u0080\"}\n"
         );
     }
 
@@ -482,7 +482,7 @@ mod tests {
         write_entry_json(&mut buf, &entry).unwrap();
         assert_eq!(
             buf,
-            b"{ \"lsn\":7, \"timestamp\":\"2026-01-29 12:00:00 UTC\", \"timestamp_ms\":1769688000000, \"data\":\"\\u0001\\u001f\\u007f\" }\n"
+            b"{\"lsn\":7,\"timestamp\":\"2026-01-29 12:00:00 UTC\",\"timestamp_ms\":1769688000000,\"data\":\"\\u0001\\u001f\\u007f\"}\n"
         );
     }
 

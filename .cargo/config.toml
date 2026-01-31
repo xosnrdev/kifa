@@ -7,4 +7,6 @@ linker = "arm-linux-gnueabihf-gcc"
 [alias]
 fc = "fmt --all -- --check"
 cw = "clippy --workspace  --all-features --all-targets -- --deny warnings -W clippy::pedantic"
-tw = "test --workspace"
+tw = "test --workspace --all-features --all-targets"
+twdoc = "test --workspace --doc"
+ct = "run --release --example crash-test -- --clean"

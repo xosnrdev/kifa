@@ -47,7 +47,7 @@ jobs:
         run: rustup toolchain install nightly --no-self-update --profile minimal --component rust-src,rustfmt,clippy
 
       - name: Install cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
+        run: cargo install cross --git https://github.com/cross-rs/cross --force
         if: matrix.os == 'ubuntu-latest'
 
       - name: Run test on ARM32 via QEMU

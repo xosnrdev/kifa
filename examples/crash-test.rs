@@ -137,7 +137,7 @@ fn build_binaries() -> Result<()> {
     println!("Building kifa and gen-transactions...");
 
     let status = Command::new("cargo")
-        .args(["build", "--release", "--workspace", "--examples"])
+        .args(["build", "--release", "--workspace", "--all-targets"])
         .status()
         .context("failed to execute cargo build")?;
 

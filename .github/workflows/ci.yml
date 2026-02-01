@@ -22,6 +22,7 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
+          - ubuntu-24.04-arm
           - macos-latest
           - windows-latest
     steps:
@@ -41,9 +42,17 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Install Rust
         run: rustup toolchain install nightly --no-self-update --profile minimal --component rust-src,rustfmt,clippy
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross --force
+        if: matrix.os == 'ubuntu-latest'
+
+      - name: Run test on ARM32 via QEMU
+        run: cross test --target arm-unknown-linux-gnueabihf --workspace --all-features
+        if: matrix.os == 'ubuntu-latest'
 
       # Aliases defined in `.cargo/config.toml`
       - name: Check formatting
@@ -56,39 +65,3 @@ jobs:
 
       - name: Run clippy
         run: cargo cw
-
-  arm-build:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - aarch64-unknown-linux-gnu # ARM64
-          - arm-unknown-linux-gnueabihf # ARM32
-    env:
-      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-      CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Install Rust
-        run: rustup toolchain install nightly --no-self-update --profile minimal --target ${{ matrix.target }}
-
-      - name: Install cross-compilation tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
-
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: cross-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Check build
-        run: cargo build --target ${{ matrix.target }}

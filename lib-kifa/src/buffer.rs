@@ -20,6 +20,7 @@ impl AlignedBuffer {
     ///
     /// All bytes are zeroed. This is appropriate for read operations where the
     /// caller does not control which bytes are accessed.
+    #[allow(dead_code)]
     pub fn new(size: usize) -> Self {
         let size = size.next_multiple_of(SECTOR_SIZE);
         let layout = Layout::from_size_align(size, SECTOR_SIZE).unwrap();

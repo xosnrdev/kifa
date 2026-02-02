@@ -270,17 +270,23 @@ fn scan_segment(path: &Path) -> Result<(Vec<RecoveredEntry>, u64), Error> {
     let mut entries = Vec::new();
     let mut offset = 0;
 
+    // pread(2) reads into buf before returning. Uninitialized memory is
+    // sound because the caller only accesses bytes within bytes_read.
+    let mut header_buf = AlignedBuffer::new_uninit(SECTOR_SIZE);
+
     loop {
         if offset + ENTRY_OVERHEAD as u64 > SEGMENT_SIZE as u64 {
             break;
         }
 
-        let mut header_buf = AlignedBuffer::new(SECTOR_SIZE);
         let Ok(bytes_read) = pread(&file, header_buf.as_mut_slice(), offset) else {
             break;
         };
 
-        if bytes_read == 0 {
+        // pread(2): "it is not an error for a successful call to transfer
+        // fewer bytes than requested." O_DIRECT on Linux transfers complete
+        // sectors, but other platforms lack this guarantee.
+        if bytes_read < ENTRY_HEADER_SIZE {
             break;
         }
 
@@ -303,7 +309,9 @@ fn scan_segment(path: &Path) -> Result<(Vec<RecoveredEntry>, u64), Error> {
             break;
         }
 
-        let mut entry_buf = AlignedBuffer::new(aligned_entry_size);
+        // pread(2) reads into buf before returning. Uninitialized memory is
+        // sound because the caller only accesses bytes within bytes_read.
+        let mut entry_buf = AlignedBuffer::new_uninit(aligned_entry_size);
         let Ok(bytes_read) = pread(&file, entry_buf.as_mut_slice(), offset) else {
             break;
         };

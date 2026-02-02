@@ -3,6 +3,13 @@
 //! Repeatedly starts Kifa with piped transactions, kills it mid-write with
 //! SIGKILL, then verifies data integrity via the stats command. Proves that
 //! fsync'd entries survive unclean shutdowns.
+//!
+//! **Flush Mode Behavior**
+//!
+//! The test defaults to `cautious` mode where every write is fsync'd and no
+//! data loss is expected. In `normal` mode, gaps may occur because up to 49
+//! entries can be lost on crash due to batched fsync. The test will report
+//! gaps but this is expected behavior for normal mode, not a failure.
 
 #![feature(string_from_utf8_lossy_owned)]
 
@@ -14,6 +21,7 @@ use std::{fs, io, thread};
 
 use anyhow::{Context, Result};
 use clap::{Parser, value_parser};
+use lib_kifa::FlushMode;
 use sysinfo::{ProcessesToUpdate, System};
 
 fn main() -> Result<()> {
@@ -299,17 +307,13 @@ fn parse_stats_output(output: &str) -> StatsResult {
 }
 
 /// Verifies the integrity of the database after a crash cycle.
-///
-/// Checks two critical invariants:
-/// 1. No gaps exist in the entry sequence (fsync'd entries should be contiguous).
-/// 2. Entry count is monotonically non-decreasing (data should not be lost).
-///
-/// Violations of either invariant indicate corruption or data loss.
-fn verify_integrity(stats: &StatsResult, prev_entries: u64) -> CycleResult {
+fn verify_integrity(stats: &StatsResult, prev_entries: u64, flush_mode: FlushMode) -> CycleResult {
     let mut passed = true;
     let mut reason = None;
 
-    if stats.gaps != GapStatus::None {
+    if stats.gaps != GapStatus::None && flush_mode == FlushMode::Cautious
+        || flush_mode == FlushMode::Emergency
+    {
         passed = false;
         reason = Some(format!("gaps detected: {:?}", stats.gaps));
     }
@@ -340,7 +344,7 @@ fn run_single_cycle(args: &Args, cycle: u64, prev_entries: u64) -> Result<CycleR
 
     let stats_output = run_stats_command(&args.data_dir)?;
     let stats = parse_stats_output(&stats_output);
-    let result = verify_integrity(&stats, prev_entries);
+    let result = verify_integrity(&stats, prev_entries, args.flush_mode.parse().unwrap());
 
     Ok(result)
 }
@@ -453,23 +457,31 @@ mod tests {
     #[test]
     fn test_verify_integrity_pass() {
         let stats = StatsResult { entries: 100, gaps: GapStatus::None };
-        let result = verify_integrity(&stats, 50);
+        let result = verify_integrity(&stats, 50, FlushMode::Cautious);
         assert!(result.passed);
         assert!(result.reason.is_none());
     }
 
     #[test]
-    fn test_verify_integrity_fail_gaps() {
+    fn test_verify_integrity_fail_gaps_cautious() {
         let stats = StatsResult { entries: 100, gaps: GapStatus::Present };
-        let result = verify_integrity(&stats, 50);
+        let result = verify_integrity(&stats, 50, FlushMode::Cautious);
         assert!(!result.passed);
         assert!(result.reason.is_some());
     }
 
     #[test]
+    fn test_verify_integrity_gaps_ok_in_normal() {
+        let stats = StatsResult { entries: 100, gaps: GapStatus::Present };
+        let result = verify_integrity(&stats, 50, FlushMode::Normal);
+        assert!(result.passed);
+        assert!(result.reason.is_none());
+    }
+
+    #[test]
     fn test_verify_integrity_fail_decreased_entries() {
         let stats = StatsResult { entries: 30, gaps: GapStatus::None };
-        let result = verify_integrity(&stats, 50);
+        let result = verify_integrity(&stats, 50, FlushMode::Cautious);
         assert!(!result.passed);
         assert!(result.reason.unwrap().contains("entries decreased"));
     }
@@ -477,7 +489,7 @@ mod tests {
     #[test]
     fn test_verify_integrity_same_entries_pass() {
         let stats = StatsResult { entries: 50, gaps: GapStatus::None };
-        let result = verify_integrity(&stats, 50);
+        let result = verify_integrity(&stats, 50, FlushMode::Cautious);
         assert!(result.passed);
     }
 }

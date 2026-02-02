@@ -1,6 +1,9 @@
 #![warn(clippy::pedantic)]
 #![allow(clippy::cast_possible_truncation)]
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod cmd;
 mod config;
 mod ingester;

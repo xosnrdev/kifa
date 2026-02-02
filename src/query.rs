@@ -9,7 +9,7 @@
 //! escapes in JSON or `[hex:...]` fallback in CSV.
 //!
 //! Exports write to a temporary file, call `sync_all()`, then atomically rename to the final path.
-//! This pattern ensures readers never observe partial output even if the process crashes mid-write.
+//! Readers never observe partial output even if the process crashes mid-write.
 
 use std::fmt;
 use std::fs::{File, remove_file};
@@ -20,6 +20,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use lib_kifa::common::{atomic_rename, temp_path};
 use lib_kifa::engine::{Config, Stats, StorageEngine};
 use lib_kifa::{Entry, engine, map_err};
+use memchr_rs::memchr;
 
 #[derive(Debug)]
 pub enum Error {
@@ -229,7 +230,7 @@ pub fn run_export(options: &QueryOptions) -> Result<u64, Error> {
     writer.flush()?;
     let file = writer.into_inner().map_err(|e| io::Error::other(e.to_string()))?;
     file.sync_all()?;
-    // Explicit drop ensures the file handle is closed before rename, which Windows requires.
+    // The file handle must be closed before rename because Windows holds an exclusive lock.
     drop(file);
 
     atomic_rename(&temp_path, output_path)?;
@@ -314,44 +315,118 @@ fn write_entry_csv<W: Write>(writer: &mut W, entry: &Entry) -> io::Result<()> {
 }
 
 fn write_entry_hex<W: Write>(writer: &mut W, entry: &Entry) -> io::Result<()> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
     write!(writer, "{:016x} {:016x} ", entry.lsn, entry.timestamp_ms)?;
-    for byte in &entry.data {
-        write!(writer, "{byte:02x}")?;
+
+    // A stack buffer amortizes write syscalls. Each input byte yields two hex
+    // characters, so 512 input bytes fill the 1024-byte buffer.
+    let mut buf = [0; 1024];
+    let mut pos = 0;
+
+    for &byte in &entry.data {
+        buf[pos] = HEX[(byte >> 4) as usize];
+        buf[pos + 1] = HEX[(byte & 0x0f) as usize];
+        pos += 2;
+
+        if pos == buf.len() {
+            writer.write_all(&buf)?;
+            pos = 0;
+        }
     }
+
+    if pos > 0 {
+        writer.write_all(&buf[..pos])?;
+    }
+
     writeln!(writer)
 }
 
 fn write_json_escaped_bytes<W: Write>(writer: &mut W, data: &[u8]) -> io::Result<()> {
-    for &byte in data {
-        match byte {
-            b'"' => write!(writer, "\\\"")?,
-            b'\\' => write!(writer, "\\\\")?,
-            b'\n' => write!(writer, "\\n")?,
-            b'\r' => write!(writer, "\\r")?,
-            b'\t' => write!(writer, "\\t")?,
-            // Printable ASCII range excluding quote (0x22) and backslash (0x5C) can be written directly.
-            0x20..=0x21 | 0x23..=0x5B | 0x5D..=0x7E => writer.write_all(&[byte])?,
-            _ => write!(writer, "\\u{byte:04x}")?,
+    // The loop accumulates runs of printable ASCII and flushes them in one
+    // write call. Only bytes requiring escape sequences trigger individual writes.
+    let mut start = 0;
+
+    for (i, &byte) in data.iter().enumerate() {
+        let escape = match byte {
+            b'"' => Some(b"\\\""),
+            b'\\' => Some(b"\\\\"),
+            b'\n' => Some(b"\\n"),
+            b'\r' => Some(b"\\r"),
+            b'\t' => Some(b"\\t"),
+            0x20..=0x21 | 0x23..=0x5B | 0x5D..=0x7E => None,
+            _ => {
+                // The byte falls outside printable ASCII, so the pending slice
+                // is flushed and the byte is emitted as a Unicode escape.
+                if start < i {
+                    writer.write_all(&data[start..i])?;
+                }
+                write!(writer, "\\u{byte:04x}")?;
+                start = i + 1;
+                continue;
+            }
+        };
+
+        if let Some(esc) = escape {
+            if start < i {
+                writer.write_all(&data[start..i])?;
+            }
+            writer.write_all(esc)?;
+            start = i + 1;
         }
     }
+
+    // Any trailing safe bytes that were not yet written are flushed here.
+    if start < data.len() {
+        writer.write_all(&data[start..])?;
+    }
+
     Ok(())
 }
 
 fn write_csv_escaped_bytes<W: Write>(writer: &mut W, data: &[u8]) -> io::Result<()> {
-    if let Ok(s) = str::from_utf8(data) {
-        for ch in s.chars() {
-            if ch == '"' {
-                write!(writer, r#""""#)?;
+    if str::from_utf8(data).is_ok() {
+        // ASCII byte 0x22 cannot appear inside a UTF-8 multi-byte sequence
+        // because continuation bytes are always in the range 0x80-0xFF. This
+        // property makes a direct byte search for the quote character correct.
+        let mut start = 0;
+        loop {
+            let pos = memchr(b'"', data, start);
+            if pos < data.len() {
+                // The slice includes the quote; a second quote is appended to
+                // satisfy RFC 4180 doubled-quote escaping.
+                writer.write_all(&data[start..=pos])?;
+                writer.write_all(b"\"")?;
+                start = pos + 1;
             } else {
-                write!(writer, "{ch}")?;
+                // The search returned the haystack length, indicating no more
+                // quotes exist. The remainder is written and the loop exits.
+                writer.write_all(&data[start..])?;
+                break;
             }
         }
     } else {
-        write!(writer, "[hex:")?;
-        for byte in data {
-            write!(writer, "{byte:02x}")?;
+        // The data is not valid UTF-8, so it is emitted as bracketed hex.
+        // A stack buffer batches the output to reduce write call overhead.
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        writer.write_all(b"[hex:")?;
+
+        let mut buf = [0; 1024];
+        let mut pos = 0;
+        for &byte in data {
+            buf[pos] = HEX[(byte >> 4) as usize];
+            buf[pos + 1] = HEX[(byte & 0x0f) as usize];
+            pos += 2;
+            if pos == buf.len() {
+                writer.write_all(&buf)?;
+                pos = 0;
+            }
         }
-        write!(writer, "]")?;
+        if pos > 0 {
+            writer.write_all(&buf[..pos])?;
+        }
+
+        writer.write_all(b"]")?;
     }
     Ok(())
 }

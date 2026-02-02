@@ -379,6 +379,7 @@ dependencies = [
  "jiff",
  "lib-kifa",
  "log",
+ "memchr-rs",
  "mimalloc",
  "notify",
  "serde",
@@ -451,6 +452,12 @@ name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
+
+[[package]]
+name = "memchr-rs"
+version = "1.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96aeb0db3659670fcb43ddef842fd57ef8c20b086f5dfa8f4a43853227bd401d"
 
 [[package]]
 name = "mimalloc"

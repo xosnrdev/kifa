@@ -4,3 +4,12 @@ cw = "clippy --workspace  --all-features --all-targets -- --deny warnings -W cli
 tw = "test --workspace --all-features --all-targets"
 twdoc = "test --workspace --doc"
 ct = "run --release --example crash-test -- --clean"
+
+# reduces binary size by 27%
+[profile.release]
+panic = "immediate-abort"
+
+[unstable]
+panic-immediate-abort = true
+build-std = ["std", "panic_abort"]
+build-std-features = ["optimize_for_size"]

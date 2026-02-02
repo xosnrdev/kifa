@@ -16,21 +16,6 @@ pub struct AlignedBuffer {
 }
 
 impl AlignedBuffer {
-    /// Creates a new zero-initialized aligned buffer.
-    ///
-    /// All bytes are zeroed. This is appropriate for read operations where the
-    /// caller does not control which bytes are accessed.
-    #[allow(dead_code)]
-    pub fn new(size: usize) -> Self {
-        let size = size.next_multiple_of(SECTOR_SIZE);
-        let layout = Layout::from_size_align(size, SECTOR_SIZE).unwrap();
-        // SAFETY: Layout is valid because `size` > 0 (next_multiple_of rounds up to at least
-        // `SECTOR_SIZE`) and `SECTOR_SIZE` is a power of two. The returned pointer is checked
-        // for null via `NonNull::new`.
-        let ptr = unsafe { alloc::alloc_zeroed(layout) };
-        Self { ptr: NonNull::new(ptr).expect("allocation failed"), size }
-    }
-
     /// Creates a new uninitialized aligned buffer.
     ///
     /// The caller must initialize all bytes before reading them. This skips zeroing
@@ -39,7 +24,8 @@ impl AlignedBuffer {
     pub fn new_uninit(size: usize) -> Self {
         let size = size.next_multiple_of(SECTOR_SIZE);
         let layout = Layout::from_size_align(size, SECTOR_SIZE).unwrap();
-        // SAFETY: Layout constraints are identical to `new()`. The caller accepts
+        // SAFETY: Layout is valid because `size` > 0 (next_multiple_of rounds up to at least
+        // `SECTOR_SIZE`) and `SECTOR_SIZE` is a power of two. The caller accepts
         // responsibility for initializing bytes before any read occurs.
         let ptr = unsafe { alloc::alloc(layout) };
         Self { ptr: NonNull::new(ptr).expect("allocation failed"), size }

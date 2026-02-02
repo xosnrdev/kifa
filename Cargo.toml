@@ -28,6 +28,7 @@ env_logger = "0.11.8"
 humantime = "2.3.0"
 lib-kifa = { path = "./lib-kifa" }
 log = { workspace = true }
+mimalloc = { version = "0.1.48", features = ["v3"] }
 notify = "8.2.0"
 serde = { version = "1.0.228", features = ["derive"] }
 signal-hook = "0.4.3"

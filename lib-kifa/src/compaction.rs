@@ -241,7 +241,7 @@ pub fn run_compaction(dir: &Path, inputs: &[SstableEntry]) -> Result<CompactionO
         return Err(e);
     }
 
-    let input_paths: Vec<PathBuf> = inputs.iter().map(|e| e.path.clone()).collect();
+    let input_paths: Vec<_> = inputs.iter().map(|e| e.path.clone()).collect();
 
     Ok(CompactionOutput {
         output_path,
@@ -258,7 +258,7 @@ pub fn commit_compaction(
 ) -> Result<CompactionResult, Error> {
     // When the output LSN range matches an input, the output overwrites that input file.
     // Filtering prevents deletion of the newly created file.
-    let removed_paths: Vec<PathBuf> =
+    let removed_paths: Vec<_> =
         output.input_paths.iter().filter(|p| **p != output.output_path).cloned().collect();
 
     manifest.remove_sstables(&removed_paths);

@@ -220,7 +220,7 @@ fn test_entries_merged_across_flush_r2() {
     let entries: Vec<_> = engine.entries().unwrap().collect();
     assert_eq!(entries.len(), 5);
 
-    let lsns: Vec<u64> = entries.iter().map(|e| e.lsn).collect();
+    let lsns: Vec<_> = entries.iter().map(|e| e.lsn).collect();
     assert_eq!(lsns, vec![1, 2, 3, 4, 5]);
 }
 

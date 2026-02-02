@@ -155,7 +155,7 @@ mod tests {
         mt.insert(20, 2000, vec![0x14]);
         mt.insert(30, 3000, vec![0x1E]);
 
-        let lsns: Vec<u64> = mt.iter().map(|e| e.lsn).collect();
+        let lsns: Vec<_> = mt.iter().map(|e| e.lsn).collect();
         assert_eq!(lsns, vec![10, 20, 30]);
     }
 

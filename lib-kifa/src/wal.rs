@@ -386,7 +386,10 @@ impl SegmentWriter {
             });
         }
 
-        let mut buffer = AlignedBuffer::new(aligned_size);
+        // The buffer starts uninitialized. All content bytes are written below, and
+        // padding bytes are explicitly zeroed after. The header, LSN, timestamp, data,
+        // and footer regions do not need pre-zeroing since they are overwritten.
+        let mut buffer = AlignedBuffer::new_uninit(aligned_size);
         let buf = buffer.as_mut_slice();
 
         let mut pos = 0;
@@ -403,6 +406,11 @@ impl SegmentWriter {
         pos += data.len();
 
         buf[pos..pos + ENTRY_FOOTER_SIZE].copy_from_slice(&footer.as_bytes());
+        pos += ENTRY_FOOTER_SIZE;
+
+        // Sector alignment leaves trailing bytes unwritten. Zeroing them stops stale
+        // memory contents from reaching disk and keeps WAL content deterministic.
+        buf[pos..].fill(0);
 
         let bytes_written = pwrite(&self.file, &buf[..aligned_size], self.offset)?;
 

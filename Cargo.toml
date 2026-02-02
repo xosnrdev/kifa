@@ -39,3 +39,15 @@ fastrand = "2.3.0"
 jiff = "0.2.18"
 sysinfo = "0.38.0"
 tempfile = "3.24.0"
+
+# See https://doc.rust-lang.org/cargo/reference/profiles.html
+# See also https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles
+[profile.release]
+opt-level = "s"
+debug = "full"
+codegen-units = 1
+lto = true
+panic = "abort"
+split-debuginfo = "packed"
+strip = "symbols"
+incremental = true

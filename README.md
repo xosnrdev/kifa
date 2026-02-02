@@ -291,7 +291,7 @@ All settings can be overridden via environment variables with the `KIFA_` prefix
 | `KIFA_FILES`                        | Comma-separated file paths        |          |
 | `KIFA_TCP`                          | Comma-separated TCP addresses     |          |
 | `KIFA_UDP`                          | Comma-separated UDP addresses     |          |
-| `KIFA_LOG`                          | Log level filter for env_logger   | `info`   |
+| `KIFA_LOG`                          | Log level filter for env_logger   |          |
 
 ### CLI Flags
 

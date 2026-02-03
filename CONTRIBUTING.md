@@ -55,15 +55,15 @@ LazyFS is a FUSE filesystem that intercepts I/O and maintains its own page cache
 docker build -f docker/Dockerfile.crash-test -t kifa-crash-test .
 
 # Test cautious mode (expects zero gaps)
-docker run --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \
+docker run --rm --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \
   --cycles 10 --flush-mode cautious
 
 # Test normal mode (allows gaps, up to 49 entries at risk)
-docker run --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \
+docker run --rm --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \
   --cycles 10 --flush-mode normal
 
 # Test emergency mode (expects zero gaps)
-docker run --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \
+docker run --rm --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \
   --cycles 10 --flush-mode emergency
 ```
 

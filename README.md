@@ -504,11 +504,11 @@ cargo ct
 docker build -f docker/Dockerfile.crash-test -t kifa-crash-test .
 
 # Run with cautious mode (zero data loss expected)
-docker run --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \
+docker run --rm --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \
   --cycles 10 --flush-mode cautious
 
 # Run with normal mode (gaps allowed, up to 50 entries at risk)
-docker run --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \
+docker run --rm --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \
   --cycles 10 --flush-mode normal
 ```
 

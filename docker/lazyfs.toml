@@ -1,0 +1,33 @@
+# LazyFS configuration for Kifa crash testing
+#
+# Reference: https://github.com/dsrhaslab/lazyfs#running-and-injecting-faults
+#
+# This configuration sets up LazyFS with:
+# * A FIFO for fault injection commands (lazyfs::clear-cache)
+# * A completion FIFO for synchronous cache clear confirmation
+# * A 256MB dedicated page cache (sufficient for crash test workloads)
+# * Eviction disabled (data only leaves cache on explicit fsync)
+
+[faults]
+# FIFO path for injecting fault commands
+fifo_path = "/tmp/lazyfs.fifo"
+# FIFO path for completion acknowledgment (used for synchronous clear-cache)
+fifo_path_completed = "/tmp/lazyfs_completed.fifo"
+
+[cache]
+# Disables automatic page eviction.
+# Data remains in cache until explicit fsync or cache clear.
+apply_eviction = false
+
+[cache.simple]
+# Cache size for unsynced data.
+# 256MB is sufficient for crash test workloads which run for 1-5 seconds per cycle.
+custom_size = "256mb"
+# Number of blocks per cache page.
+# Using 1 provides finest granularity for cache management.
+blocks_per_page = 1
+
+[filesystem]
+# Disables verbose operation logging.
+# Enable for debugging LazyFS behavior if needed.
+log_all_operations = false

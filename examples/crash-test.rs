@@ -3,6 +3,18 @@
 //! Repeatedly starts Kifa with piped transactions, kills it mid-write with
 //! SIGKILL, then verifies data integrity via the stats command. Proves that
 //! fsync'd entries survive unclean shutdowns.
+//!
+//! **`LazyFS` Mode (Linux/Docker)**
+//!
+//! When `--lazyfs` is enabled, the test uses `LazyFS` FIFO commands to simulate
+//! true power failure by clearing unsynced cache before killing the daemon.
+//!
+//! **Flush Mode Behavior**
+//!
+//! The test defaults to `cautious` mode where every write is fsync'd and no
+//! data loss is expected. In `normal` mode, gaps may occur because up to 49
+//! entries can be lost on crash due to batched fsync. The test will report
+//! gaps but this is expected behavior for normal mode, not a failure.
 
 #![feature(string_from_utf8_lossy_owned)]
 
@@ -14,6 +26,7 @@ use std::{fs, io, thread};
 
 use anyhow::{Context, Result};
 use clap::{Parser, value_parser};
+use lib_kifa::FlushMode;
 use sysinfo::{ProcessesToUpdate, System};
 
 fn main() -> Result<()> {
@@ -67,10 +80,35 @@ struct Args {
     /// Skips building binaries before running the test.
     #[arg(long)]
     skip_build: bool,
-}
 
-const KIFA_BIN_PATH: &str = "./target/release/kifa";
-const GEN_TRANSACTIONS_BIN_PATH: &str = "./target/release/examples/gen-transactions";
+    /// Enables `LazyFS` crash simulation.
+    #[cfg(target_os = "linux")]
+    #[arg(long)]
+    lazyfs: bool,
+
+    /// `LazyFS` root directory (where persisted data lives).
+    #[cfg(target_os = "linux")]
+    #[arg(long, default_value = "/data/lazyfs", value_name = "DIR")]
+    lazyfs_root: PathBuf,
+
+    /// `LazyFS` FIFO path for fault injection commands.
+    #[cfg(target_os = "linux")]
+    #[arg(long, default_value = "/tmp/lazyfs.fifo", value_name = "PATH")]
+    lazyfs_fifo: PathBuf,
+
+    /// `LazyFS` completion FIFO path for synchronous cache clear.
+    #[cfg(target_os = "linux")]
+    #[arg(long, default_value = "/tmp/lazyfs_completed.fifo", value_name = "PATH")]
+    lazyfs_completed_fifo: PathBuf,
+
+    /// Path to the kifa binary.
+    #[arg(long, default_value = "./target/release/kifa", value_name = "PATH")]
+    kifa_bin: PathBuf,
+
+    /// Path to the gen-transactions binary.
+    #[arg(long, default_value = "./target/release/examples/gen-transactions", value_name = "PATH")]
+    gen_transactions_bin: PathBuf,
+}
 
 /// Status of gaps detected in the database during verification.
 #[derive(Debug, PartialEq, Clone, Default)]
@@ -168,13 +206,14 @@ fn setup_data_directory(data_dir: &PathBuf, clean: bool) -> Result<()> {
 /// Each cycle uses a unique seed for reproducibility while generating different
 /// transaction streams across cycles.
 fn spawn_test_pipeline(args: &Args, cycle: u64) -> Result<Child> {
-    let mut gen_child = Command::new(GEN_TRANSACTIONS_BIN_PATH)
+    let gen_bin = &args.gen_transactions_bin;
+    let mut gen_child = Command::new(gen_bin)
         .args(["-n", "0", "-r", &args.rate.to_string(), "-s", &cycle.to_string()])
         .stdout(Stdio::piped())
         .spawn()
         .or_else(|err| {
             if err.kind() == io::ErrorKind::NotFound {
-                anyhow::bail!("gen-transactions binary not found at {GEN_TRANSACTIONS_BIN_PATH}");
+                anyhow::bail!("gen-transactions binary not found at {}", gen_bin.display());
             }
             Err(err.into())
         })
@@ -185,7 +224,8 @@ fn spawn_test_pipeline(args: &Args, cycle: u64) -> Result<Child> {
         .take()
         .ok_or_else(|| anyhow::anyhow!("failed to capture gen-transactions stdout"))?;
 
-    Command::new(KIFA_BIN_PATH)
+    let kifa_bin = &args.kifa_bin;
+    Command::new(kifa_bin)
         .args([
             "daemon",
             "--stdin",
@@ -202,7 +242,7 @@ fn spawn_test_pipeline(args: &Args, cycle: u64) -> Result<Child> {
         .spawn()
         .or_else(|err| {
             if err.kind() == io::ErrorKind::NotFound {
-                anyhow::bail!("kifa binary not found at {KIFA_BIN_PATH}");
+                anyhow::bail!("kifa binary not found at {}", kifa_bin.display());
             }
             Err(err.into())
         })
@@ -241,6 +281,47 @@ fn cleanup_orphaned_processes(data_dir: &Path, cycle: u64) {
     thread::sleep(Duration::from_secs(1));
 }
 
+/// Clears `LazyFS` cache via FIFO command.
+///
+/// Sends `lazyfs::clear-cache` command to discard all unsynced data,
+/// simulating a true power failure. Waits for completion acknowledgment
+/// if the completed FIFO exists.
+///
+/// Reference: <https://github.com/dsrhaslab/lazyfs#running-and-injecting-faults>
+#[cfg(target_os = "linux")]
+fn clear_lazyfs_cache(fifo_path: &Path, completed_fifo_path: &Path) -> Result<()> {
+    use std::fs::OpenOptions;
+    use std::io::{BufRead, BufReader, Write};
+
+    let mut fifo = OpenOptions::new()
+        .write(true)
+        .open(fifo_path)
+        .with_context(|| format!("failed to open LazyFS FIFO at {}", fifo_path.display()))?;
+
+    fifo.write_all(b"lazyfs::clear-cache\n")
+        .context("failed to write clear-cache command to LazyFS FIFO")?;
+
+    fifo.flush().context("failed to flush LazyFS FIFO")?;
+
+    if completed_fifo_path.exists() {
+        let completed_fifo =
+            OpenOptions::new().read(true).open(completed_fifo_path).with_context(|| {
+                format!("failed to open LazyFS completed FIFO at {}", completed_fifo_path.display())
+            })?;
+
+        let mut reader = BufReader::new(completed_fifo);
+        let mut line = String::new();
+
+        reader
+            .read_line(&mut line)
+            .context("failed to read completion acknowledgment from LazyFS")?;
+    } else {
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    Ok(())
+}
+
 /// Cleans up all `kifa` and `gen-transactions` processes.
 ///
 /// This is called on program exit to ensure no test processes are left running.
@@ -255,8 +336,8 @@ fn cleanup_all_processes(data_dir: &Path) {
 ///
 /// The stats command triggers WAL recovery and reports the current state of the
 /// database, which is used to verify that data was not corrupted by the crash.
-fn run_stats_command(data_dir: &Path) -> Result<String> {
-    let output = Command::new(KIFA_BIN_PATH)
+fn run_stats_command(kifa_bin: &Path, data_dir: &Path) -> Result<String> {
+    let output = Command::new(kifa_bin)
         .args([
             "stats",
             "-d",
@@ -300,16 +381,17 @@ fn parse_stats_output(output: &str) -> StatsResult {
 
 /// Verifies the integrity of the database after a crash cycle.
 ///
-/// Checks two critical invariants:
-/// 1. No gaps exist in the entry sequence (fsync'd entries should be contiguous).
-/// 2. Entry count is monotonically non-decreasing (data should not be lost).
+/// Checks critical invariants based on flush mode:
+/// * Cautious/Emergency: No gaps allowed (fsync after every write).
+/// * Normal: Gaps allowed (up to 49 entries at risk due to batched fsync).
+/// * All modes: Entry count must be monotonically non-decreasing.
 ///
-/// Violations of either invariant indicate corruption or data loss.
-fn verify_integrity(stats: &StatsResult, prev_entries: u64) -> CycleResult {
+/// Violations indicate corruption or unexpected data loss.
+fn verify_integrity(stats: &StatsResult, prev_entries: u64, flush_mode: FlushMode) -> CycleResult {
     let mut passed = true;
     let mut reason = None;
 
-    if stats.gaps != GapStatus::None {
+    if stats.gaps != GapStatus::None && flush_mode.is_durable() {
         passed = false;
         reason = Some(format!("gaps detected: {:?}", stats.gaps));
     }
@@ -328,19 +410,33 @@ fn verify_integrity(stats: &StatsResult, prev_entries: u64) -> CycleResult {
 /// The cycle runs for a random duration (1-5 seconds) for crashes to occur
 /// at different points in the write/flush/compaction lifecycle, for
 /// better coverage of crash scenarios.
+///
+/// When `LazyFS` is enabled, clears the cache before killing the daemon to
+/// simulate true power failure (unsynced data is discarded).
 fn run_single_cycle(args: &Args, cycle: u64, prev_entries: u64) -> Result<CycleResult> {
     let mut child = spawn_test_pipeline(args, cycle)?;
     let sleep_secs = fastrand::u64(1..=5);
     thread::sleep(Duration::from_secs(sleep_secs));
+
+    #[cfg(target_os = "linux")]
+    if args.lazyfs {
+        clear_lazyfs_cache(&args.lazyfs_fifo, &args.lazyfs_completed_fifo)?;
+    }
 
     let _ = child.kill();
     let _ = child.wait();
 
     cleanup_orphaned_processes(&args.data_dir, cycle);
 
-    let stats_output = run_stats_command(&args.data_dir)?;
+    #[cfg(target_os = "linux")]
+    let data_dir = if args.lazyfs { &args.lazyfs_root } else { &args.data_dir };
+
+    #[cfg(not(target_os = "linux"))]
+    let data_dir = &args.data_dir;
+
+    let stats_output = run_stats_command(&args.kifa_bin, data_dir)?;
     let stats = parse_stats_output(&stats_output);
-    let result = verify_integrity(&stats, prev_entries);
+    let result = verify_integrity(&stats, prev_entries, args.flush_mode.parse().unwrap());
 
     Ok(result)
 }
@@ -394,16 +490,26 @@ fn run_crash_test(args: &Args) -> Result<TestSummary> {
 
 /// Prints the test configuration header.
 fn print_test_header(args: &Args) {
-    println!("\n=== Kifa Crash Test ===");
+    println!("\n<--- Kifa Crash Test --->");
     println!("Flush mode: {}", args.flush_mode);
     println!("Cycles:     {}", args.cycles);
     println!("Rate:       {} txn/s", args.rate);
-    println!("Data dir:   {}\n", args.data_dir.display());
+    println!("Data dir:   {}", args.data_dir.display());
+    #[cfg(target_os = "linux")]
+    if args.lazyfs {
+        println!("LazyFS:     enabled");
+        println!("  Root:     {}", args.lazyfs_root.display());
+        println!("  FIFO:     {}\n", args.lazyfs_fifo.display());
+    } else {
+        println!("LazyFS:     disabled (SIGKILL only)\n");
+    }
+    #[cfg(not(target_os = "linux"))]
+    println!("LazyFS:     disabled (SIGKILL only)\n");
 }
 
 /// Prints the summary of test results.
 fn print_summary(summary: &TestSummary) {
-    println!("\n=== Summary ===");
+    println!("\n<--- Summary --->");
     println!("Cycles:    {}/{} passed", summary.passed, summary.total_cycles);
     println!("Entries:   {} verified", summary.final_entries);
     println!("Gaps:      {}", summary.gap_cycles);
@@ -453,23 +559,30 @@ mod tests {
     #[test]
     fn test_verify_integrity_pass() {
         let stats = StatsResult { entries: 100, gaps: GapStatus::None };
-        let result = verify_integrity(&stats, 50);
+        let result = verify_integrity(&stats, 50, FlushMode::Cautious);
         assert!(result.passed);
         assert!(result.reason.is_none());
     }
 
     #[test]
-    fn test_verify_integrity_fail_gaps() {
+    fn test_verify_integrity_fail_gaps_cautious() {
         let stats = StatsResult { entries: 100, gaps: GapStatus::Present };
-        let result = verify_integrity(&stats, 50);
+        let result = verify_integrity(&stats, 50, FlushMode::Cautious);
         assert!(!result.passed);
         assert!(result.reason.is_some());
     }
 
     #[test]
+    fn test_verify_integrity_allow_gaps_normal() {
+        let stats = StatsResult { entries: 100, gaps: GapStatus::Present };
+        let result = verify_integrity(&stats, 50, FlushMode::Normal);
+        assert!(result.passed);
+    }
+
+    #[test]
     fn test_verify_integrity_fail_decreased_entries() {
         let stats = StatsResult { entries: 30, gaps: GapStatus::None };
-        let result = verify_integrity(&stats, 50);
+        let result = verify_integrity(&stats, 50, FlushMode::Cautious);
         assert!(!result.passed);
         assert!(result.reason.unwrap().contains("entries decreased"));
     }
@@ -477,7 +590,7 @@ mod tests {
     #[test]
     fn test_verify_integrity_same_entries_pass() {
         let stats = StatsResult { entries: 50, gaps: GapStatus::None };
-        let result = verify_integrity(&stats, 50);
+        let result = verify_integrity(&stats, 50, FlushMode::Cautious);
         assert!(result.passed);
     }
 }

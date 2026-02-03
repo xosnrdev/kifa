@@ -199,7 +199,7 @@ fn open_segment_file(path: &Path, create: bool) -> Result<File, Error> {
 
     opts.create_new(create);
 
-    opts.custom_flags(libc::O_DIRECT | libc::O_DSYNC);
+    opts.custom_flags(libc::O_DIRECT);
 
     opts.open(path).map_err(Error::SegmentCreation)
 }

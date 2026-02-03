@@ -18,7 +18,7 @@ and pull requests will vary. All participants are expected to follow the
 ## Development setup
 
 Kifa requires the Rust nightly toolchain. The minimum supported version is
-1.93.0, pinned in `rust-toolchain.toml`.
+1.93.0, declared in `Cargo.toml`.
 
 The project uses aliased commands configured in [.cargo/config.toml](./.cargo/config.toml) to streamline the development workflow.
 

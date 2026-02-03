@@ -12,6 +12,8 @@
   <a href="#configuration">Configuration</a> •
   <a href="#architecture">Architecture</a> •
   <a href="#deployment">Deployment</a> •
+  <a href="#security-considerations">Security Considerations</a> •
+  <a href="#crash-testing">Crash Testing</a> •
   <a href="#contributing">Contributing</a>
 </p>
 
@@ -467,6 +469,44 @@ Exit codes follow Unix convention:
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
+## Crash Testing
+
+The crash-test harness verifies that Kifa's durability guarantees hold under simulated power failures.
+
+### Local Testing
+
+```bash
+cargo ct # runs the crash test without lazyfs (default: 100 cycles, cautious mode). See `cargo ct --help` for options.
+```
+
+### Docker with LazyFS
+
+[LazyFS](https://github.com/dsrhaslab/lazyfs) simulates page cache behavior, allowing controlled cache clears that mimic power loss. The Docker setup handles FUSE mounting automatically.
+
+**Requirements:** Docker with privileged mode support.
+
+```bash
+# Build the image
+docker compose -f docker-compose.lazyfs.yml build
+
+# Run crash test with LazyFS (default: 100 cycles, cautious mode)
+docker compose -f docker-compose.lazyfs.yml run --rm kifa-lazyfs
+
+# With custom options
+docker compose -f docker-compose.lazyfs.yml run --rm kifa-lazyfs \
+    ./target/release/examples/crash-test --lazyfs --flush-mode normal -n 20
+```
+
+**Expected results:**
+
+| Flush Mode  | Entries Lost per Crash |
+| ----------- | ---------------------- |
+| `cautious`  | 0                      |
+| `emergency` | 0                      |
+| `normal`    | Up to 49               |
+
+If `cautious` or `emergency` mode loses any entries, something is broken.
+
 ## Contributing
 
 Want to contribute? Please read:
@@ -487,7 +527,7 @@ cargo cw
 # Run tests
 cargo tw
 
-# Run crash test (verifies durability)
+# Run crash test without lazyfs
 cargo ct
 ```
 

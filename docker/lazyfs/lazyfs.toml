@@ -1,0 +1,29 @@
+# LazyFS configuration for Kifa crash testing.
+#
+# This configuration sets up LazyFS with a FIFO for fault injection
+# and disables cache eviction so we control exactly when data is lost.
+
+[faults]
+# Named pipe for sending commands to LazyFS.
+fifo_path = "/tmp/lazyfs.fifo"
+
+# Named pipe for receiving completion signals.
+fifo_path_completed = "/tmp/lazyfs.done"
+
+[cache]
+# Disable automatic eviction so we control cache clearing manually.
+apply_eviction = false
+
+[cache.simple]
+# Cache size for testing. 256 MiB is sufficient for crash tests.
+custom_size = "256MB"
+
+# One block per page for fine-grained control.
+blocks_per_page = 1
+
+[filesystem]
+# Disable operation logging for performance.
+log_all_operations = false
+
+# Log file location if logging is enabled.
+logfile = "/tmp/lazyfs.log"

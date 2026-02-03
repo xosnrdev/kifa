@@ -1,0 +1,22 @@
+# Rust build artifacts
+target/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test data
+data/
+
+# Docker files (avoid recursive copy)
+docker-compose*.yml

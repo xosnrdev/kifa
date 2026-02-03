@@ -199,7 +199,7 @@ fn open_segment_file(path: &Path, create: bool) -> Result<File, Error> {
 
     opts.create_new(create);
 
-    opts.custom_flags(libc::O_DIRECT | libc::O_DSYNC);
+    opts.custom_flags(libc::O_DIRECT);
 
     opts.open(path).map_err(Error::SegmentCreation)
 }
@@ -229,7 +229,12 @@ fn preallocate_segment(file: &File) -> Result<(), Error> {
     };
 
     if result != 0 {
-        return Err(Error::PreallocationFailed(io::Error::last_os_error()));
+        let err = io::Error::last_os_error();
+        if err.raw_os_error() == Some(libc::EOPNOTSUPP) {
+            log::debug!("fallocate unsupported, falling back to ftruncate");
+            return file.set_len(SEGMENT_SIZE as u64).map_err(Error::PreallocationFailed);
+        }
+        return Err(Error::PreallocationFailed(err));
     }
 
     Ok(())

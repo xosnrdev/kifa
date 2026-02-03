@@ -1,0 +1,26 @@
+# LazyFS Durability Test Environment
+#
+# This compose file sets up a complete LazyFS testing environment for Kifa.
+# Requires Docker with --privileged or FUSE capabilities.
+#
+# Usage:
+#   docker compose -f docker-compose.lazyfs.yml build
+#   docker compose -f docker-compose.lazyfs.yml run --rm kifa-lazyfs
+#
+# To run with different flush modes:
+#   docker compose -f docker-compose.lazyfs.yml run --rm kifa-lazyfs \
+#       ./target/release/examples/crash-test --lazyfs --flush-mode normal -n 20
+
+services:
+  kifa-lazyfs:
+    build:
+      context: .
+      dockerfile: docker/lazyfs/Dockerfile
+    privileged: true
+    stdin_open: true
+    tty: true
+    volumes:
+      # Mount source for faster iteration during development.
+      # Remove this for CI to use the baked-in build.
+      - ./examples:/kifa/examples:ro
+    working_dir: /kifa

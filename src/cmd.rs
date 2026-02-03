@@ -125,6 +125,9 @@ struct DaemonCmd {
 
     #[arg(long, help = "Internal channel buffer size")]
     channel_capacity: Option<usize>,
+
+    #[arg(long, hide = true, help = "Emit durability checkpoints to stderr for crash testing")]
+    crash_test: bool,
 }
 
 #[derive(Parser, Clone)]
@@ -201,6 +204,7 @@ fn build_partial_config(cli: &Cli, daemon: Option<&DaemonCmd>) -> PartialConfig 
         partial.flush_mode = d.flush_mode.map(FlushMode::from);
         partial.segment_size = d.segment_size_mib.map(|v| v * MEBI);
         partial.channel_capacity = d.channel_capacity;
+        partial.crash_test_mode = if d.crash_test { Some(true) } else { None };
         partial.stdin = if d.stdin { Some(true) } else { None };
         partial.files = if d.file.is_empty() { None } else { Some(d.file.clone()) };
         partial.tcp = if d.tcp.is_empty() { None } else { Some(d.tcp.clone()) };
@@ -253,6 +257,7 @@ fn resolve_command(cli: &Cli) -> Result<ResolvedCommand> {
                 compaction_threshold: None,
                 no_compaction: false,
                 channel_capacity: None,
+                crash_test: false,
             };
             let partial = build_partial_config(cli, Some(&default_daemon));
             let app_config = config::load(partial).context("loading config")?;
@@ -396,7 +401,11 @@ fn run_daemon(config: &AppConfig) -> Result<ExitCode> {
     print_recovery_report(&recovery_report);
 
     let engine = Arc::new(engine);
-    let (ingester, handle) = Ingester::new(Arc::clone(&engine), config.ingester.channel_capacity);
+    let (ingester, handle) = Ingester::new(
+        Arc::clone(&engine),
+        config.ingester.channel_capacity,
+        config.ingester.crash_test_mode,
+    );
 
     engine.set_flush_mode(config.wal.flush_mode);
 

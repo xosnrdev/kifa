@@ -42,7 +42,7 @@ cargo tw
 cargo twdoc
 ```
 
-The crash test simulates POS crash scenarios. Run it with `cargo ct`.
+The crash test simulates POS crash scenarios. See [README](README.md/#crash-testing) for details.
 
 ## Code quality standards
 

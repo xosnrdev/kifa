@@ -35,11 +35,16 @@ pub struct Ingester {
     receiver: mpsc::Receiver<Vec<u8>>,
     shutdown: Arc<AtomicBool>,
     flush_escalate: Arc<AtomicBool>,
+    crash_test_mode: bool,
 }
 
 impl Ingester {
     #[must_use]
-    pub fn new(engine: Arc<StorageEngine>, capacity: usize) -> (Self, IngesterHandle) {
+    pub fn new(
+        engine: Arc<StorageEngine>,
+        capacity: usize,
+        crash_test_mode: bool,
+    ) -> (Self, IngesterHandle) {
         let (sender, receiver) = mpsc::sync_channel(capacity);
         let shutdown = Arc::new(AtomicBool::new(false));
         let flush_escalate = Arc::new(AtomicBool::new(false));
@@ -49,6 +54,7 @@ impl Ingester {
             receiver,
             shutdown: Arc::clone(&shutdown),
             flush_escalate: Arc::clone(&flush_escalate),
+            crash_test_mode,
         };
 
         let handle = IngesterHandle { sender, shutdown, flush_escalate };
@@ -61,7 +67,7 @@ impl Ingester {
     pub fn with_default_capacity(engine: Arc<StorageEngine>) -> (Self, IngesterHandle) {
         use lib_kifa::KIBI;
 
-        Self::new(engine, KIBI)
+        Self::new(engine, KIBI, false)
     }
 
     #[must_use]
@@ -101,9 +107,12 @@ impl Ingester {
         let len = data.len() as u64;
 
         match self.engine.append(data) {
-            Ok(_) => {
+            Ok(lsn) => {
                 stats.entries_ingested += 1;
                 stats.bytes_ingested += len;
+                if self.crash_test_mode {
+                    eprintln!("DURABLE:{lsn}");
+                }
             }
             Err(e) => {
                 log::error!("Append failed ({} MiB): {e}", len as usize / MEBI);
@@ -244,7 +253,7 @@ mod tests {
         let engine = create_test_engine(dir.path());
         let engine_read = Arc::clone(&engine);
 
-        let (ingester, handle) = Ingester::new(engine, 100);
+        let (ingester, handle) = Ingester::new(engine, 100, false);
 
         for i in 0..50 {
             handle.try_send(format!("entry_{i}").into_bytes()).unwrap();
@@ -265,7 +274,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let engine = create_test_engine(dir.path());
 
-        let (ingester, handle) = Ingester::new(engine, 2);
+        let (ingester, handle) = Ingester::new(engine, 2, false);
 
         handle.try_send(b"entry_1".to_vec()).unwrap();
         handle.try_send(b"entry_2".to_vec()).unwrap();

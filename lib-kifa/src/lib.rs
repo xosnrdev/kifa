@@ -6,6 +6,8 @@
     clippy::cast_possible_wrap
 )]
 
+use std::str::FromStr;
+
 mod buffer;
 mod compaction;
 pub mod engine;
@@ -54,30 +56,54 @@ pub mod common {
 ///
 /// | Mode | Behavior | Data at Risk |
 /// |------|----------|--------------|
-/// | `Normal` | Batch sync every ~50 writes | Up to 50 entries |
-/// | `Cautious` | Sync after each write | None (after return) |
-/// | `Emergency` | Sync immediately, pause compaction | None |
+/// | `Normal` | Batch fsync every ~50 writes | Up to 49 entries |
+/// | `Cautious` | fsync after each write | None (after return) |
+/// | `Emergency` | fsync immediately, pause compaction | None |
 ///
 /// Throughput depends on storage hardware. Consumer SSDs typically achieve
 /// 100-300 fsyncs/sec; enterprise `NVMe` with power-loss protection can exceed 30,000.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlushMode {
-    /// Batch syncs for throughput.
+    /// Batches fsync calls for maximum throughput at the cost of durability.
     ///
-    /// Data is written immediately but only fsync'd every ~50 writes.
-    /// Up to 50 entries may be lost on power failure.
+    /// Data is written immediately via `O_DIRECT` but only fsync'd every 50 writes.
+    /// On power failure, up to 49 entries that were written but not yet fsync'd
+    /// may be lost. The 50th write triggers an fsync that makes all 50 durable.
+    ///
+    /// **Warning**
+    ///
+    /// This mode trades durability for throughput. Use only when losing recent
+    /// entries is acceptable. For financial or audit-critical data, use `Cautious`.
     Normal,
 
-    /// Sync after every write for durability.
+    /// Fsyncs after every write for immediate durability.
     ///
     /// Each [`StorageEngine::append`](crate::engine::StorageEngine::append)
-    /// returns only after fsync completes.
+    /// returns only after the entry is fsync'd to stable storage. No data loss
+    /// occurs on power failure for entries where `append()` returned successfully.
+    ///
+    /// This is the recommended default for financial and audit-critical workloads.
     Cautious,
 
-    /// Maximum durability for imminent power loss.
+    /// Maximum durability mode for imminent power failure.
     ///
-    /// Like `Cautious`, but also pauses background compaction to reduce I/O.
+    /// Behaves like `Cautious` (fsync every write) but also pauses background
+    /// compaction to minimize disk I/O. Use when brown-out detection triggers
+    /// or UPS signals low battery. Escalate to this mode via SIGUSR1.
     Emergency,
+}
+
+impl FromStr for FlushMode {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "normal" => Ok(FlushMode::Normal),
+            "cautious" => Ok(FlushMode::Cautious),
+            "emergency" => Ok(FlushMode::Emergency),
+            _ => Err("invalid flush mode"),
+        }
+    }
 }
 
 /// A single log entry retrieved from storage.

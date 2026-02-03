@@ -320,7 +320,7 @@ Flush modes control when data is fsync'd to disk. Choose based on your durabilit
 
 | Mode        | Behavior                           | Data at Risk              | Use When                           |
 | ----------- | ---------------------------------- | ------------------------- | ---------------------------------- |
-| `normal`    | Batch sync every ~50 writes        | Up to 50 entries          | Stable power, maximum throughput   |
+| `normal`    | Batch sync every ~50 writes        | Up to 49 entries          | Stable power, maximum throughput   |
 | `cautious`  | Sync after each write              | None (after call returns) | Elevated risk, possible brown-outs |
 | `emergency` | Sync immediately, pause compaction | None                      | Power failure imminent             |
 
@@ -491,6 +491,9 @@ cargo cw
 # Run tests
 cargo tw
 
+# Run doc tests
+cargo twdoc
+
 # Run crash test (SIGKILL-based, see note below)
 cargo ct
 ```
@@ -507,7 +510,7 @@ docker build -f docker/Dockerfile.crash-test -t kifa-crash-test .
 docker run --rm --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \
   --cycles 10 --flush-mode cautious
 
-# Run with normal mode (gaps allowed, up to 50 entries at risk)
+# Run with normal mode (gaps allowed, up to 49 entries at risk)
 docker run --rm --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \
   --cycles 10 --flush-mode normal
 ```

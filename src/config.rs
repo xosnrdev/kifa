@@ -164,11 +164,17 @@ impl Default for WalConfig {
 #[derive(Debug, Clone)]
 pub struct IngesterConfig {
     pub channel_capacity: usize,
+    #[cfg(feature = "crash-test")]
+    pub crash_test_mode: bool,
 }
 
 impl Default for IngesterConfig {
     fn default() -> Self {
-        Self { channel_capacity: DEFAULT_CHANNEL_CAPACITY }
+        Self {
+            channel_capacity: DEFAULT_CHANNEL_CAPACITY,
+            #[cfg(feature = "crash-test")]
+            crash_test_mode: false,
+        }
     }
 }
 
@@ -199,6 +205,8 @@ pub struct PartialConfig {
     pub flush_mode: Option<FlushMode>,
     pub segment_size: Option<usize>,
     pub channel_capacity: Option<usize>,
+    #[cfg(feature = "crash-test")]
+    pub crash_test_mode: Option<bool>,
     pub stdin: Option<bool>,
     pub files: Option<Vec<PathBuf>>,
     pub tcp: Option<Vec<String>>,
@@ -230,6 +238,10 @@ impl PartialConfig {
         }
         if other.channel_capacity.is_some() {
             self.channel_capacity = other.channel_capacity;
+        }
+        #[cfg(feature = "crash-test")]
+        if other.crash_test_mode.is_some() {
+            self.crash_test_mode = other.crash_test_mode;
         }
         if other.stdin.is_some() {
             self.stdin = other.stdin;
@@ -265,6 +277,8 @@ impl PartialConfig {
 
         let ingester = IngesterConfig {
             channel_capacity: self.channel_capacity.unwrap_or(DEFAULT_CHANNEL_CAPACITY),
+            #[cfg(feature = "crash-test")]
+            crash_test_mode: self.crash_test_mode.unwrap_or_default(),
         };
 
         let sources = SourcesConfig {
@@ -605,7 +619,11 @@ mod tests {
             data_dir: PathBuf::from("/tmp"),
             storage: StorageConfig::default(),
             wal: WalConfig::default(),
-            ingester: IngesterConfig { channel_capacity: 0 },
+            ingester: IngesterConfig {
+                channel_capacity: 0,
+                #[cfg(feature = "crash-test")]
+                crash_test_mode: false,
+            },
             sources: SourcesConfig::default(),
         };
         let err = validate(&config).unwrap_err();

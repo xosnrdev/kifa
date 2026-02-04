@@ -15,7 +15,7 @@ ExecStart=/usr/local/bin/kifa daemon
 Environment=KIFA_DATA_DIR=/var/lib/kifa
 
 # WAL sync strategy: normal, cautious, or emergency.
-#Environment=KIFA_FLUSH_MODE=normal
+#Environment=KIFA_FLUSH_MODE=cautious
 
 # WAL segment size in MiB (minimum 1, must be 4 KiB-aligned).
 #Environment=KIFA_SEGMENT_SIZE_MIB=16

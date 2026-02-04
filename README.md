@@ -74,7 +74,7 @@ Storage:
   Memtable: 1 entries
 
 WAL:
-  Flush mode: Normal
+  Flush mode: Cautious
 
 Health:
   Time range: 2026-01-31 18:30:00 UTC - 2026-01-31 18:30:00 UTC
@@ -255,7 +255,7 @@ compaction_enabled = true
 
 [wal]
 # Sync strategy: "normal", "cautious", or "emergency"
-flush_mode = "normal"
+flush_mode = "cautious"
 
 # WAL segment size in MiB (minimum: 1, must be 4 KiB-aligned)
 segment_size_mib = 16
@@ -341,7 +341,7 @@ KIFA_FLUSH_MODE=emergency kifa daemon --stdin -d ./data
 **At runtime (Unix only):**
 
 ```bash
-# Escalate to next level (Normal → Cautious → Emergency)
+# Escalate to emergency mode (Cautious → Emergency)
 kill -USR1 $(pgrep kifa)
 ```
 
@@ -454,7 +454,7 @@ Security hardening included:
 | ----------------- | --------------------------------------------------- |
 | `SIGINT` (Ctrl+C) | Graceful shutdown, flush pending data               |
 | `SIGTERM`         | Same as SIGINT (for systemd)                        |
-| `SIGUSR1`         | Escalate flush mode (Normal → Cautious → Emergency) |
+| `SIGUSR1`         | Escalate flush mode (Cautious → Emergency)          |
 
 Exit codes follow Unix convention:
 

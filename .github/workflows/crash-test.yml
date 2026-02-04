@@ -4,9 +4,29 @@ on:
   push:
     branches:
       - master
+    paths:
+      - "lib-kifa/**"
+      - "src/**"
+      - "examples/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "lazyfs/**"
+      - ".cargo/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/crash-test.yml"
   pull_request:
     branches:
       - master
+    paths:
+      - "lib-kifa/**"
+      - "src/**"
+      - "examples/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "lazyfs/**"
+      - ".cargo/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/crash-test.yml"
   workflow_dispatch:
     inputs:
       cycles:
@@ -102,9 +122,9 @@ jobs:
           sudo mkdir -p "$LAZYFS_MOUNT" "$LAZYFS_ROOT"
           sudo chown "$(id -u):$(id -g)" "$LAZYFS_MOUNT" "$LAZYFS_ROOT"
           sudo mkdir -p "$(dirname "$LAZYFS_CONFIG")"
-          sudo cp docker/lazyfs.toml "$LAZYFS_CONFIG"
-          chmod +x docker/mount-lazyfs.sh
-          docker/mount-lazyfs.sh \
+          sudo cp lazyfs/lazyfs.toml "$LAZYFS_CONFIG"
+          chmod +x lazyfs/mount-lazyfs.sh
+          lazyfs/mount-lazyfs.sh \
             -c "$LAZYFS_CONFIG" \
             -m "$LAZYFS_MOUNT" \
             -r "$LAZYFS_ROOT" \

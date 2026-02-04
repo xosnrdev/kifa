@@ -52,7 +52,7 @@ LazyFS is a FUSE filesystem that intercepts I/O and maintains its own page cache
 
 ```bash
 # Build the Docker image (includes LazyFS and Kifa)
-docker build -f docker/Dockerfile.crash-test -t kifa-crash-test .
+docker build -f lazyfs/Dockerfile.crash-test -t kifa-crash-test .
 
 # Test cautious mode (expects zero gaps)
 docker run --rm --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \

@@ -504,7 +504,7 @@ cargo ct
 
 ```bash
 # Build the crash-test image
-docker build -f docker/Dockerfile.crash-test -t kifa-crash-test .
+docker build -f lazyfs/Dockerfile.crash-test -t kifa-crash-test .
 
 # Run with cautious mode (zero data loss expected)
 docker run --rm --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \

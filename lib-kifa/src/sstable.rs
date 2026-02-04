@@ -177,7 +177,7 @@ pub fn flush_memtable(memtable: &Memtable, final_path: &Path) -> Result<SstableI
     let mut prev_lsn = 0;
 
     // Entry count and LSN range are unknown until iteration completes. Writing zeros here
-    // ensures the file has an invalid magic number if a crash occurs before the final header.
+    // leaves the file with an invalid magic number if a crash occurs before the final header.
     let placeholder_header = [0; HEADER_SIZE];
     writer.write_all(&placeholder_header)?;
 

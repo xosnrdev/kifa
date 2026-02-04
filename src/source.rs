@@ -189,7 +189,7 @@ fn handle_tcp_connection(
     handle: &IngesterHandle,
     shutdown: &AtomicBool,
 ) -> Result<(), Error> {
-    // The timeout ensures read_line yields periodically so the shutdown flag can be checked.
+    // The timeout forces read_line to yield periodically so the shutdown flag can be checked.
     stream.set_read_timeout(Some(TCP_READ_TIMEOUT))?;
 
     let prefix = format!("[tcp:{peer_addr}] ").into_bytes();

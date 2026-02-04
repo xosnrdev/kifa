@@ -371,8 +371,8 @@ fn clear_lazyfs_cache(fifo_path: &Path, completed_fifo_path: &Path) -> Result<()
 
 /// Cleans up all `kifa` and `gen-transactions` processes.
 ///
-/// This is called on program exit to ensure no test processes are left running.
-/// Targeting all instances regardless of cycle or data directory.
+/// Called on program exit to kill any remaining test processes.
+/// Targets all instances regardless of cycle or data directory.
 fn cleanup_all_processes(data_dir: &Path) {
     let sys = refreshed_system();
     let data_dir_str = data_dir.display().to_string();

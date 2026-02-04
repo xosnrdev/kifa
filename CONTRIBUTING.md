@@ -20,7 +20,7 @@ and pull requests will vary. All participants are expected to follow the
 Kifa requires the Rust nightly toolchain. The minimum supported version is
 1.93.0, declared in `Cargo.toml`.
 
-The project uses aliased commands configured in [.cargo/config.toml](./.cargo/config.toml) to streamline the development workflow.
+The project uses aliased commands configured in [.cargo/config.toml](./.cargo/config.toml) for common tasks.
 
 ```sh
 git clone https://github.com/xosnrdev/kifa.git

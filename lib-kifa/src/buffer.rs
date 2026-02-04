@@ -40,8 +40,8 @@ impl AlignedBuffer {
 
     pub const fn as_mut_slice(&mut self) -> &mut [u8] {
         // SAFETY: `ptr` is valid, aligned to `SECTOR_SIZE`, and points to `size` bytes allocated
-        // in `new()`. The lifetime of the returned slice is tied to `&mut self`, ensuring
-        // exclusive access and preventing aliasing.
+        // in `new()`. The lifetime of the returned slice is tied to `&mut self`, which
+        // guarantees exclusive access and prevents aliasing.
         unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), self.size) }
     }
 }

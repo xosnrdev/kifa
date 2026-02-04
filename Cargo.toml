@@ -1,10 +1,10 @@
 [package]
 name = "kifa"
 description = "Crash-proof local logging for POS and mobile money systems."
-version = { workspace = true }
-edition = { workspace = true }
-authors = { workspace = true }
-license = { workspace = true }
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
 rust-version = "1.93.0"
 
 [workspace]
@@ -30,7 +30,7 @@ clap-cargo = { version = "0.18.3", features = ["clap"] }
 env_logger = "0.11.8"
 humantime = "2.3.0"
 lib-kifa = { path = "./lib-kifa" }
-log = { workspace = true }
+log.workspace = true
 memchr-rs = { version = "1.0.11", features = ["memchr"] }
 mimalloc = { version = "0.1.48", features = ["v3"] }
 notify = "8.2.0"

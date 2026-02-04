@@ -94,7 +94,7 @@ enum Command {
     Stats,
 }
 
-#[derive(Parser)]
+#[derive(Parser, Default)]
 struct DaemonCmd {
     #[arg(long, help = "Read log lines from standard input")]
     stdin: bool,
@@ -251,21 +251,7 @@ fn resolve_command(cli: &Cli) -> Result<ResolvedCommand> {
         }
         // No subcommand defaults to daemon mode, allowing `kifa -c config.toml` without explicit `daemon`.
         None => {
-            let default_daemon = DaemonCmd {
-                stdin: false,
-                #[cfg(feature = "crash-test")]
-                crash_test: false,
-                file: Vec::new(),
-                tcp: Vec::new(),
-                udp: Vec::new(),
-                flush_mode: None,
-                segment_size_mib: None,
-                memtable_threshold_mib: None,
-                compaction_threshold: None,
-                no_compaction: false,
-                channel_capacity: None,
-            };
-            let partial = build_partial_config(cli, Some(&default_daemon));
+            let partial = build_partial_config(cli, Some(&DaemonCmd::default()));
             let app_config = config::load(partial).context("loading config")?;
 
             if !app_config.sources.stdin

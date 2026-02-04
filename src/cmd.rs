@@ -99,6 +99,11 @@ struct DaemonCmd {
     #[arg(long, help = "Read log lines from standard input")]
     stdin: bool,
 
+    // Emit durability checkpoints to stderr for crash testing
+    #[cfg(feature = "crash-test")]
+    #[arg(long, hide = true)]
+    crash_test: bool,
+
     #[arg(long, action = ArgAction::Append, help = "Tail log file (can specify multiple)")]
     file: Vec<PathBuf>,
 
@@ -201,6 +206,10 @@ fn build_partial_config(cli: &Cli, daemon: Option<&DaemonCmd>) -> PartialConfig 
         partial.flush_mode = d.flush_mode.map(FlushMode::from);
         partial.segment_size = d.segment_size_mib.map(|v| v * MEBI);
         partial.channel_capacity = d.channel_capacity;
+        #[cfg(feature = "crash-test")]
+        {
+            partial.crash_test_mode = if d.crash_test { Some(true) } else { None };
+        }
         partial.stdin = if d.stdin { Some(true) } else { None };
         partial.files = if d.file.is_empty() { None } else { Some(d.file.clone()) };
         partial.tcp = if d.tcp.is_empty() { None } else { Some(d.tcp.clone()) };
@@ -244,6 +253,8 @@ fn resolve_command(cli: &Cli) -> Result<ResolvedCommand> {
         None => {
             let default_daemon = DaemonCmd {
                 stdin: false,
+                #[cfg(feature = "crash-test")]
+                crash_test: false,
                 file: Vec::new(),
                 tcp: Vec::new(),
                 udp: Vec::new(),
@@ -396,6 +407,13 @@ fn run_daemon(config: &AppConfig) -> Result<ExitCode> {
     print_recovery_report(&recovery_report);
 
     let engine = Arc::new(engine);
+    #[cfg(feature = "crash-test")]
+    let (ingester, handle) = Ingester::new(
+        Arc::clone(&engine),
+        config.ingester.channel_capacity,
+        config.ingester.crash_test_mode,
+    );
+    #[cfg(not(feature = "crash-test"))]
     let (ingester, handle) = Ingester::new(Arc::clone(&engine), config.ingester.channel_capacity);
 
     engine.set_flush_mode(config.wal.flush_mode);

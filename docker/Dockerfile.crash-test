@@ -1,0 +1,90 @@
+# Dockerfile for Kifa crash testing with LazyFS
+#
+# Builds LazyFS from source and Kifa in release mode, then runs crash tests
+# with durability validation via LazyFS cache clearing.
+#
+# Build: docker build -f docker/Dockerfile.crash-test -t kifa-crash-test .
+# Run:   docker run --rm --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test
+#
+# Documentation: https://github.com/dsrhaslab/lazyfs
+
+FROM ubuntu:24.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies for LazyFS and Kifa
+# LazyFS requires: g++, cmake, libfuse3-dev, fuse3
+# Kifa requires: Rust toolchain
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    g++ \
+    cmake \
+    libfuse3-dev \
+    libfuse3-3 \
+    fuse3 \
+    pkg-config \
+    git \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build LazyFS from source
+# Reference: https://github.com/dsrhaslab/lazyfs#installation
+WORKDIR /opt
+RUN git clone --depth 1 https://github.com/dsrhaslab/lazyfs.git
+
+WORKDIR /opt/lazyfs
+RUN cd libs/libpcache && ./build.sh && cd - \
+    && cd lazyfs && ./build.sh && cd -
+
+# Install Rust toolchain
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Copy Kifa source and build in release mode with crash-test feature
+WORKDIR /kifa
+COPY . .
+RUN cargo build --release --workspace --all-targets --features crash-test
+
+# Runtime stage
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install runtime dependencies for FUSE
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libfuse3-3 \
+    fuse3 \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Enable FUSE allow_other option (required for LazyFS)
+# Reference: https://github.com/dsrhaslab/lazyfs#installation
+RUN echo "user_allow_other" >> /etc/fuse.conf
+
+# Copy LazyFS binary and libpcache
+COPY --from=builder /opt/lazyfs/lazyfs/build/lazyfs /usr/local/bin/lazyfs
+COPY --from=builder /opt/lazyfs/libs/libpcache/build/libpcache.so /usr/local/lib/libpcache.so.0
+
+# Register libpcache with the dynamic linker
+RUN ln -s /usr/local/lib/libpcache.so.0 /usr/local/lib/libpcache.so \
+    && ldconfig
+
+# Copy custom mount script 
+COPY docker/mount-lazyfs.sh /usr/local/bin/mount-lazyfs.sh
+
+# Copy Kifa binaries
+COPY --from=builder /kifa/target/release/kifa /usr/local/bin/kifa
+COPY --from=builder /kifa/target/release/examples/gen-transactions /usr/local/bin/gen-transactions
+COPY --from=builder /kifa/target/release/examples/crash-test /usr/local/bin/crash-test
+
+# Copy LazyFS configuration and entrypoint script
+COPY docker/lazyfs.toml /etc/lazyfs/lazyfs.toml
+COPY docker/run-crash-test.sh /usr/local/bin/run-crash-test.sh
+RUN chmod +x /usr/local/bin/run-crash-test.sh \
+    && chmod +x /usr/local/bin/mount-lazyfs.sh
+
+# Create directories for LazyFS mount and root
+RUN mkdir -p /mnt/lazyfs /data/lazyfs
+
+ENTRYPOINT ["/usr/local/bin/run-crash-test.sh"]

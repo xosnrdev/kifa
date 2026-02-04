@@ -9,7 +9,9 @@
   <a href="#quick-start">Quick Start</a> •
   <a href="#installation">Installation</a> •
   <a href="#usage">Usage</a> •
+  <a href="#security-considerations">Security Considerations</a> •
   <a href="#configuration">Configuration</a> •
+  <a href="#crash-testing">Crash Testing</a> •
   <a href="#architecture">Architecture</a> •
   <a href="#deployment">Deployment</a> •
   <a href="#contributing">Contributing</a>
@@ -108,6 +110,8 @@ This builds:
 
 - `./target/release/examples/gen-transactions`: Synthetic POS transaction generator
 - `./target/release/examples/crash-test`: Crash recovery verification harness
+
+For true durability validation, run crash tests with LazyFS in Docker (see [Crash Testing](#crash-testing) below).
 
 ## Usage
 
@@ -316,7 +320,7 @@ Flush modes control when data is fsync'd to disk. Choose based on your durabilit
 
 | Mode        | Behavior                           | Data at Risk              | Use When                           |
 | ----------- | ---------------------------------- | ------------------------- | ---------------------------------- |
-| `normal`    | Batch sync every ~50 writes        | Up to 50 entries          | Stable power, maximum throughput   |
+| `normal`    | Batch sync every ~50 writes        | Up to 49 entries          | Stable power, maximum throughput   |
 | `cautious`  | Sync after each write              | None (after call returns) | Elevated risk, possible brown-outs |
 | `emergency` | Sync immediately, pause compaction | None                      | Power failure imminent             |
 
@@ -487,9 +491,31 @@ cargo cw
 # Run tests
 cargo tw
 
-# Run crash test (verifies durability)
+# Run doc tests
+cargo twdoc
+
+# Run crash test (SIGKILL-based, see note below)
 cargo ct
 ```
+
+### Crash Testing
+
+`cargo ct` uses SIGKILL to simulate crashes. On Linux, this can produce false positives because the kernel may persist buffered writes after the process dies. For true durability validation, use the Docker-based LazyFS test:
+
+```bash
+# Build the crash-test image
+docker build -f docker/Dockerfile.crash-test -t kifa-crash-test .
+
+# Run with cautious mode (zero data loss expected)
+docker run --rm --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \
+  --cycles 10 --flush-mode cautious
+
+# Run with normal mode (gaps allowed, up to 49 entries at risk)
+docker run --rm --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \
+  --cycles 10 --flush-mode normal
+```
+
+LazyFS intercepts filesystem calls and discards unsynced data when clearing its cache, simulating actual power loss behavior.
 
 ## License
 

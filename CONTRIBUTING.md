@@ -18,7 +18,7 @@ and pull requests will vary. All participants are expected to follow the
 ## Development setup
 
 Kifa requires the Rust nightly toolchain. The minimum supported version is
-1.93.0, pinned in `rust-toolchain.toml`.
+1.93.0, declared in `Cargo.toml`.
 
 The project uses aliased commands configured in [.cargo/config.toml](./.cargo/config.toml) to streamline the development workflow.
 
@@ -43,6 +43,31 @@ cargo twdoc
 ```
 
 The crash test simulates POS crash scenarios. Run it with `cargo ct`.
+
+**Note:** `cargo ct` uses SIGKILL, which can produce false positives on Linux because the kernel may persist buffered writes after process death. For true durability validation, use Docker with LazyFS (see below).
+
+## LazyFS crash testing
+
+LazyFS is a FUSE filesystem that intercepts I/O and maintains its own page cache. Clearing that cache discards unsynced writes, simulating actual power failure.
+
+```bash
+# Build the Docker image (includes LazyFS and Kifa)
+docker build -f docker/Dockerfile.crash-test -t kifa-crash-test .
+
+# Test cautious mode (expects zero gaps)
+docker run --rm --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \
+  --cycles 10 --flush-mode cautious
+
+# Test normal mode (allows gaps, up to 49 entries at risk)
+docker run --rm --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \
+  --cycles 10 --flush-mode normal
+
+# Test emergency mode (expects zero gaps)
+docker run --rm --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \
+  --cycles 10 --flush-mode emergency
+```
+
+The `--cap-add SYS_ADMIN --device /dev/fuse` flags are required for FUSE filesystem support. Run with `--help` for all available options.
 
 ## Code quality standards
 

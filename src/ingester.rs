@@ -35,11 +35,17 @@ pub struct Ingester {
     receiver: mpsc::Receiver<Vec<u8>>,
     shutdown: Arc<AtomicBool>,
     flush_escalate: Arc<AtomicBool>,
+    #[cfg(feature = "crash-test")]
+    crash_test_mode: bool,
 }
 
 impl Ingester {
     #[must_use]
-    pub fn new(engine: Arc<StorageEngine>, capacity: usize) -> (Self, IngesterHandle) {
+    pub fn new(
+        engine: Arc<StorageEngine>,
+        capacity: usize,
+        #[cfg(feature = "crash-test")] crash_test_mode: bool,
+    ) -> (Self, IngesterHandle) {
         let (sender, receiver) = mpsc::sync_channel(capacity);
         let shutdown = Arc::new(AtomicBool::new(false));
         let flush_escalate = Arc::new(AtomicBool::new(false));
@@ -49,6 +55,8 @@ impl Ingester {
             receiver,
             shutdown: Arc::clone(&shutdown),
             flush_escalate: Arc::clone(&flush_escalate),
+            #[cfg(feature = "crash-test")]
+            crash_test_mode,
         };
 
         let handle = IngesterHandle { sender, shutdown, flush_escalate };
@@ -61,6 +69,9 @@ impl Ingester {
     pub fn with_default_capacity(engine: Arc<StorageEngine>) -> (Self, IngesterHandle) {
         use lib_kifa::KIBI;
 
+        #[cfg(feature = "crash-test")]
+        return Self::new(engine, KIBI, false);
+        #[cfg(not(feature = "crash-test"))]
         Self::new(engine, KIBI)
     }
 
@@ -101,6 +112,15 @@ impl Ingester {
         let len = data.len() as u64;
 
         match self.engine.append(data) {
+            #[cfg(feature = "crash-test")]
+            Ok(lsn) => {
+                stats.entries_ingested += 1;
+                stats.bytes_ingested += len;
+                if self.crash_test_mode {
+                    eprintln!("DURABLE:{lsn}");
+                }
+            }
+            #[cfg(not(feature = "crash-test"))]
             Ok(_) => {
                 stats.entries_ingested += 1;
                 stats.bytes_ingested += len;
@@ -244,6 +264,9 @@ mod tests {
         let engine = create_test_engine(dir.path());
         let engine_read = Arc::clone(&engine);
 
+        #[cfg(feature = "crash-test")]
+        let (ingester, handle) = Ingester::new(engine, 100, false);
+        #[cfg(not(feature = "crash-test"))]
         let (ingester, handle) = Ingester::new(engine, 100);
 
         for i in 0..50 {
@@ -265,6 +288,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let engine = create_test_engine(dir.path());
 
+        #[cfg(feature = "crash-test")]
+        let (ingester, handle) = Ingester::new(engine, 2, false);
+        #[cfg(not(feature = "crash-test"))]
         let (ingester, handle) = Ingester::new(engine, 2);
 
         handle.try_send(b"entry_1".to_vec()).unwrap();

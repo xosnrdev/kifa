@@ -1,0 +1,28 @@
+# Build artifacts
+target/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Documentation and non-essential files
+*.md
+!README.md
+LICENSE*
+SECURITY.md
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
+
+# Local data
+data/
+
+# Misc
+.DS_Store
+Thumbs.db

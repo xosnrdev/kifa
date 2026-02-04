@@ -1,0 +1,153 @@
+name: Crash Test (LazyFS)
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+    inputs:
+      cycles:
+        description: "Number of crash cycles"
+        required: false
+        default: "20"
+      flush_mode:
+        description: "Flush mode to test"
+        required: false
+        default: "cautious"
+        type: choice
+        options:
+          - normal
+          - cautious
+          - emergency
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  LAZYFS_DIR: /tmp/lazyfs-src
+  LAZYFS_MOUNT: /mnt/lazyfs
+  LAZYFS_ROOT: /data/lazyfs
+  LAZYFS_CONFIG: /etc/lazyfs/lazyfs.toml
+
+jobs:
+  crash-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        flush_mode:
+          - cautious
+          - normal
+          - emergency
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install LazyFS build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ libfuse3-dev fuse3 pkg-config
+
+      - name: Cache LazyFS build
+        id: cache-lazyfs
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.LAZYFS_DIR }}
+          key: lazyfs-build-${{ runner.arch }}
+
+      - name: Build LazyFS
+        if: steps.cache-lazyfs.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 https://github.com/dsrhaslab/lazyfs.git "$LAZYFS_DIR"
+          cd "$LAZYFS_DIR/libs/libpcache" && ./build.sh
+          cd "$LAZYFS_DIR/lazyfs" && ./build.sh
+
+      - name: Install LazyFS
+        run: |
+          sudo cp "$LAZYFS_DIR/lazyfs/build/lazyfs" /usr/local/bin/lazyfs
+          sudo cp "$LAZYFS_DIR/libs/libpcache/build/libpcache.so" /usr/local/lib/libpcache.so.0
+          sudo ln -sf /usr/local/lib/libpcache.so.0 /usr/local/lib/libpcache.so
+          sudo ldconfig
+
+      - name: Configure FUSE permissions
+        run: |
+          sudo modprobe fuse
+          sudo chmod 666 /dev/fuse
+          echo "user_allow_other" | sudo tee -a /etc/fuse.conf
+          sudo chmod 644 /etc/fuse.conf
+
+      - name: Install Rust
+        run: rustup toolchain install nightly --no-self-update --profile minimal --component rust-src
+
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-${{ runner.arch }}-crash-test-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build Kifa
+        run: cargo build --release --workspace --all-targets --features crash-test
+
+      - name: Mount LazyFS
+        run: |
+          sudo mkdir -p "$LAZYFS_MOUNT" "$LAZYFS_ROOT"
+          sudo chown "$(id -u):$(id -g)" "$LAZYFS_MOUNT" "$LAZYFS_ROOT"
+          sudo mkdir -p "$(dirname "$LAZYFS_CONFIG")"
+          sudo cp docker/lazyfs.toml "$LAZYFS_CONFIG"
+          chmod +x docker/mount-lazyfs.sh
+          docker/mount-lazyfs.sh \
+            -c "$LAZYFS_CONFIG" \
+            -m "$LAZYFS_MOUNT" \
+            -r "$LAZYFS_ROOT" \
+            -s
+
+          retries=20
+          while ! mountpoint -q "$LAZYFS_MOUNT" && [ $retries -gt 0 ]; do
+            sleep 0.25
+            retries=$((retries - 1))
+          done
+          [ $retries -gt 0 ] || { echo "Error: Failed to mount LazyFS" >&2; exit 1; }
+
+          retries=20
+          while [ ! -p /tmp/lazyfs.fifo ] && [ $retries -gt 0 ]; do
+            sleep 0.25
+            retries=$((retries - 1))
+          done
+          [ $retries -gt 0 ] || { echo "Error: LazyFS FIFO not created" >&2; exit 1; }
+
+      - name: Run crash test
+        run: |
+          ./target/release/examples/crash-test \
+            --data-dir "$LAZYFS_MOUNT" \
+            --lazyfs \
+            --lazyfs-root "$LAZYFS_ROOT" \
+            --skip-build \
+            --cycles ${{ github.event.inputs.cycles || '20' }} \
+            --flush-mode ${{ matrix.flush_mode }}
+
+      - name: Unmount LazyFS
+        if: always()
+        run: fusermount -uz "$LAZYFS_MOUNT" 2>/dev/null || true
+
+  crash-test-summary:
+    runs-on: ubuntu-latest
+    needs: crash-test
+    if: always()
+    steps:
+      - name: Check crash test results
+        run: |
+          if [ "${{ needs.crash-test.result }}" = "success" ]; then
+            echo -e "\033[32mAll crash tests passed!\033[0m"
+          else
+            echo -e "\033[31mSome crash tests failed\033[0m"
+            exit 1
+          fi

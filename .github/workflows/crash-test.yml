@@ -94,6 +94,7 @@ jobs:
       - name: Mount LazyFS
         run: |
           sudo mkdir -p "$LAZYFS_MOUNT" "$LAZYFS_ROOT"
+          sudo chown "$(id -u):$(id -g)" "$LAZYFS_MOUNT" "$LAZYFS_ROOT"
           sudo mkdir -p "$(dirname "$LAZYFS_CONFIG")"
           sudo cp docker/lazyfs.toml "$LAZYFS_CONFIG"
           chmod +x docker/mount-lazyfs.sh
@@ -117,7 +118,7 @@ jobs:
           done
           [ $retries -gt 0 ] || { echo "Error: LazyFS FIFO not created" >&2; exit 1; }
 
-      - name: Run crash test (${{ matrix.flush_mode }} mode)
+      - name: Run crash test
         run: |
           ./target/release/examples/crash-test \
             --data-dir "$LAZYFS_MOUNT" \

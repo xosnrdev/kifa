@@ -3,7 +3,7 @@
 # Builds LazyFS from source and Kifa in release mode, then runs crash tests
 # with durability validation via LazyFS cache clearing.
 #
-# Build: docker build -f docker/Dockerfile.crash-test -t kifa-crash-test .
+# Build: docker build -f lazyfs/Dockerfile.crash-test -t kifa-crash-test .
 # Run:   docker run --rm --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test
 #
 # Documentation: https://github.com/dsrhaslab/lazyfs
@@ -71,7 +71,7 @@ RUN ln -s /usr/local/lib/libpcache.so.0 /usr/local/lib/libpcache.so \
     && ldconfig
 
 # Copy custom mount script 
-COPY docker/mount-lazyfs.sh /usr/local/bin/mount-lazyfs.sh
+COPY lazyfs/mount-lazyfs.sh /usr/local/bin/mount-lazyfs.sh
 
 # Copy Kifa binaries
 COPY --from=builder /kifa/target/release/kifa /usr/local/bin/kifa
@@ -79,8 +79,8 @@ COPY --from=builder /kifa/target/release/examples/gen-transactions /usr/local/bi
 COPY --from=builder /kifa/target/release/examples/crash-test /usr/local/bin/crash-test
 
 # Copy LazyFS configuration and entrypoint script
-COPY docker/lazyfs.toml /etc/lazyfs/lazyfs.toml
-COPY docker/run-crash-test.sh /usr/local/bin/run-crash-test.sh
+COPY lazyfs/lazyfs.toml /etc/lazyfs/lazyfs.toml
+COPY lazyfs/run-crash-test.sh /usr/local/bin/run-crash-test.sh
 RUN chmod +x /usr/local/bin/run-crash-test.sh \
     && chmod +x /usr/local/bin/mount-lazyfs.sh
 

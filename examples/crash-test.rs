@@ -270,7 +270,7 @@ fn spawn_test_pipeline(args: &Args, cycle: u64) -> Result<PipelineHandle> {
     Ok(PipelineHandle { kifa_child, gen_child })
 }
 
-/// Parses stderr output to find the last durable LSN.
+/// Parses stderr output to find the last durable LSN and collect errors.
 fn parse_daemon_stderr(stderr: ChildStderr) -> (u64, Vec<String>) {
     let reader = io::BufReader::new(stderr);
     let mut last_durable_lsn = 0;

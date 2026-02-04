@@ -89,7 +89,7 @@ fn merge_entries(
 
     while let Some(Reverse(heap_entry)) = heap.pop() {
         // Entries with LSN at or below prev_lsn are duplicates from overlapping SSTables.
-        // Skipping them ensures strictly increasing LSN order in the output.
+        // Skipping them preserves strictly increasing LSN order in the output.
         if entry_count > 0 && heap_entry.lsn <= prev_lsn {
             if let Some(next_entry) = iters[heap_entry.source_idx].next() {
                 heap.push(Reverse(HeapEntry {

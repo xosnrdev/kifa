@@ -257,7 +257,7 @@ struct CompactionState {
 /// let (engine, report) = StorageEngine::open(Path::new("/var/lib/myapp"), Config::default())
 ///     .expect("failed to open");
 ///
-/// // Cautious mode ensures each write survives power loss.
+/// // Cautious mode syncs each write to disk before returning.
 /// engine.set_flush_mode(FlushMode::Cautious);
 ///
 /// // The append call blocks until the entry is durable on disk.

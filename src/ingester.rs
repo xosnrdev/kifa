@@ -80,9 +80,8 @@ impl Ingester {
         let mut stats = IngesterStats::default();
 
         loop {
-            // The swap clears the flag atomically, ensuring emergency mode triggers exactly once
-            // per escalation signal. Checking this before shutdown guarantees an emergency
-            // request set just before termination still gets honored.
+            // The swap clears the flag atomically so emergency mode triggers exactly once per
+            // escalation signal. Checked before shutdown so a late escalation request still fires.
             if self.flush_escalate.swap(false, Ordering::Relaxed) {
                 self.engine.set_flush_mode(FlushMode::Emergency);
             }

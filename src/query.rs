@@ -63,8 +63,8 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-// The guard deletes the temp file on drop unless disarmed, ensuring partial writes are cleaned up
-// if an error occurs before the atomic rename completes.
+// Deletes the temp file on drop unless disarmed. Partial writes are cleaned up if an error
+// occurs before the atomic rename completes.
 struct TempFileGuard<'a> {
     path: &'a Path,
     disarm: bool,

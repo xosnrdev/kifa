@@ -270,20 +270,30 @@ fn spawn_test_pipeline(args: &Args, cycle: u64) -> Result<PipelineHandle> {
     Ok(PipelineHandle { kifa_child, gen_child })
 }
 
-/// Parses stderr output to find the last durable LSN.
-fn parse_last_durable_lsn(stderr: ChildStderr) -> u64 {
+/// Parsed result from daemon stderr containing the last durable LSN and any
+/// non-DURABLE error lines for diagnostics.
+struct DaemonOutput {
+    last_durable_lsn: u64,
+    errors: Vec<String>,
+}
+
+/// Parses stderr output to find the last durable LSN and collect error lines.
+fn parse_daemon_stderr(stderr: ChildStderr) -> DaemonOutput {
     let reader = io::BufReader::new(stderr);
     let mut last_lsn = 0;
+    let mut errors = Vec::new();
 
     for line in reader.lines().map_while(Result::ok) {
         if let Some(lsn_str) = line.strip_prefix("DURABLE:")
             && let Ok(lsn) = lsn_str.parse::<u64>()
         {
             last_lsn = lsn;
+        } else if !line.is_empty() {
+            errors.push(line);
         }
     }
 
-    last_lsn
+    DaemonOutput { last_durable_lsn: last_lsn, errors }
 }
 
 /// Refreshes the system process list once and returns the System handle.
@@ -364,6 +374,29 @@ fn clear_lazyfs_cache(fifo_path: &Path, completed_fifo_path: &Path) -> Result<()
     }
 
     Ok(())
+}
+
+/// Checks whether the LazyFS FUSE mount is still responsive and logs the result.
+///
+/// Uses `stat` on the mount directory to detect a hanging or broken FUSE mount.
+/// This is purely diagnostic — the result is logged but does not abort the test.
+#[cfg(target_os = "linux")]
+fn check_lazyfs_mount(mount_dir: &Path) {
+    let result = Command::new("stat")
+        .arg(mount_dir.as_os_str())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .status();
+
+    match result {
+        Ok(status) if status.success() => {}
+        Ok(status) => {
+            eprintln!("  [diag] FUSE mount unhealthy at {}: exit {status}", mount_dir.display());
+        }
+        Err(e) => {
+            eprintln!("  [diag] FUSE mount check failed at {}: {e}", mount_dir.display());
+        }
+    }
 }
 
 /// Cleans up all `kifa` and `gen-transactions` processes.
@@ -510,9 +543,15 @@ fn run_single_cycle(args: &Args, cycle: u64, prev_entries: u64) -> Result<CycleR
     let _ = handle.gen_child.wait();
     let _ = handle.kifa_child.wait();
 
-    let last_durable_lsn = stderr.map_or(0, parse_last_durable_lsn);
+    let daemon_output = stderr
+        .map_or(DaemonOutput { last_durable_lsn: 0, errors: Vec::new() }, parse_daemon_stderr);
 
     cleanup_orphaned_processes(&args.data_dir, cycle);
+
+    #[cfg(target_os = "linux")]
+    if args.lazyfs {
+        check_lazyfs_mount(&args.data_dir);
+    }
 
     #[cfg(target_os = "linux")]
     let data_dir = if args.lazyfs { &args.lazyfs_root } else { &args.data_dir };
@@ -522,8 +561,27 @@ fn run_single_cycle(args: &Args, cycle: u64, prev_entries: u64) -> Result<CycleR
 
     let stats_output = run_stats_command(&args.kifa_bin, data_dir)?;
     let stats = parse_stats_output(&stats_output);
-    let result =
-        verify_integrity(&stats, prev_entries, last_durable_lsn, args.flush_mode.parse().unwrap());
+
+    if stats.entries == 0 && stats.gaps == GapStatus::Unknown {
+        eprintln!("  [diag] kifa stats returned no parseable output:");
+        for line in stats_output.lines().take(20) {
+            eprintln!("  [diag]   {line}");
+        }
+    }
+
+    if daemon_output.last_durable_lsn == 0 && !daemon_output.errors.is_empty() {
+        eprintln!("  [diag] daemon stderr (no DURABLE lines):");
+        for line in daemon_output.errors.iter().take(10) {
+            eprintln!("  [diag]   {line}");
+        }
+    }
+
+    let result = verify_integrity(
+        &stats,
+        prev_entries,
+        daemon_output.last_durable_lsn,
+        args.flush_mode.parse().unwrap(),
+    );
 
     Ok(result)
 }

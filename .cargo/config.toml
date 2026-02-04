@@ -4,6 +4,7 @@ cw = "clippy --workspace  --all-features --all-targets -- --deny warnings -W cli
 tw = "test --workspace --all-features --all-targets"
 twdoc = "test --workspace --doc"
 ct = "run --release --example crash-test -- --clean"
+bp = "bench --package lib-kifa"
 
 # reduces binary size by 27%
 # This breaks some crates that rely on unwinding for error handling when running the crash test and benches.

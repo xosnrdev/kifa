@@ -496,6 +496,9 @@ cargo twdoc
 
 # Run crash test (SIGKILL-based, see note below)
 cargo ct
+
+# Run throughput benchmarks
+cargo bp
 ```
 
 ### Crash Testing

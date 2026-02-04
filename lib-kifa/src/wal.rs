@@ -509,7 +509,7 @@ impl Wal {
             dir: dir.to_path_buf(),
             writer: Mutex::new(writer),
             next_lsn: AtomicU64::new(next_lsn),
-            flush_mode: Mutex::new(FlushMode::Normal),
+            flush_mode: Mutex::new(FlushMode::Cautious),
             pending_syncs: AtomicU64::new(0),
             last_durable_lsn: AtomicU64::new(last_durable),
         })
@@ -774,7 +774,7 @@ mod tests {
         let stats = wal.stats();
         assert_eq!(stats.next_lsn, 1);
         assert_eq!(stats.last_durable_lsn, 0);
-        assert_eq!(stats.flush_mode, FlushMode::Normal);
+        assert_eq!(stats.flush_mode, FlushMode::Cautious);
     }
 
     #[test]

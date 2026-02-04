@@ -157,7 +157,7 @@ pub struct WalConfig {
 
 impl Default for WalConfig {
     fn default() -> Self {
-        Self { flush_mode: FlushMode::Normal, segment_size: DEFAULT_SEGMENT_SIZE }
+        Self { flush_mode: FlushMode::Cautious, segment_size: DEFAULT_SEGMENT_SIZE }
     }
 }
 
@@ -271,7 +271,7 @@ impl PartialConfig {
         };
 
         let wal = WalConfig {
-            flush_mode: self.flush_mode.unwrap_or(FlushMode::Normal),
+            flush_mode: self.flush_mode.unwrap_or(FlushMode::Cautious),
             segment_size: self.segment_size.unwrap_or(DEFAULT_SEGMENT_SIZE),
         };
 

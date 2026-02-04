@@ -103,7 +103,6 @@ jobs:
           sudo chown "$(id -u):$(id -g)" "$LAZYFS_MOUNT" "$LAZYFS_ROOT"
           sudo mkdir -p "$(dirname "$LAZYFS_CONFIG")"
           sudo cp docker/lazyfs.toml "$LAZYFS_CONFIG"
-          rm -rf "${LAZYFS_ROOT:?}"/* 2>/dev/null || true
           chmod +x docker/mount-lazyfs.sh
           docker/mount-lazyfs.sh \
             -c "$LAZYFS_CONFIG" \
@@ -132,6 +131,7 @@ jobs:
             --lazyfs \
             --lazyfs-root "$LAZYFS_ROOT" \
             --skip-build \
+            --clean \
             --cycles ${{ github.event.inputs.cycles || '20' }} \
             --flush-mode ${{ matrix.flush_mode }}
 

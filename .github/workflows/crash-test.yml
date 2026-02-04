@@ -131,7 +131,6 @@ jobs:
             --lazyfs \
             --lazyfs-root "$LAZYFS_ROOT" \
             --skip-build \
-            --clean \
             --cycles ${{ github.event.inputs.cycles || '20' }} \
             --flush-mode ${{ matrix.flush_mode }}
 

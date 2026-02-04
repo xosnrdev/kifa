@@ -347,11 +347,13 @@ kill -USR1 $(pgrep kifa)
 
 ### Performance Considerations
 
-| Mode        | Typical Throughput  | Notes                                |
-| ----------- | ------------------- | ------------------------------------ |
-| `normal`    | 10,000+ entries/sec | Linux Direct I/O bypasses page cache |
-| `cautious`  | 100-300 entries/sec | Depends on storage fsync speed       |
-| `emergency` | Same as cautious    | Also pauses compaction               |
+| Mode        | Throughput Bottleneck              | Notes                                          |
+| ----------- | ---------------------------------- | ---------------------------------------------- |
+| `normal`    | pwrite syscall + memtable flush    | fsync amortized over 50 writes; ~7x cautious   |
+| `cautious`  | Storage fsync latency              | One fdatasync per append; hardware-dependent    |
+| `emergency` | Same as cautious                   | Compaction pause has no measurable impact       |
+
+Throughput scales with storage hardware. Run `cargo bp` on your target device for specific numbers.
 
 ## Architecture
 

@@ -40,6 +40,8 @@ cargo cw
 cargo tw
 # Runs documentation tests.
 cargo twdoc
+# Runs throughput benchmarks.
+cargo bp
 ```
 
 The crash test simulates POS crash scenarios. Run it with `cargo ct`.

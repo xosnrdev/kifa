@@ -228,11 +228,20 @@ fn preallocate_segment(file: &File) -> Result<(), Error> {
         )
     };
 
-    if result != 0 {
-        return Err(Error::PreallocationFailed(io::Error::last_os_error()));
+    if result == 0 {
+        return Ok(());
     }
 
-    Ok(())
+    let err = io::Error::last_os_error();
+
+    // LazyFS (and FUSE filesystems in general) do not implement fallocate. During crash testing
+    // the WAL runs on a FUSE mount, so falling back to ftruncate keeps the harness functional.
+    #[cfg(feature = "crash-test")]
+    if err.raw_os_error() == Some(libc::EOPNOTSUPP) {
+        return file.set_len(SEGMENT_SIZE as u64).map_err(Error::PreallocationFailed);
+    }
+
+    Err(Error::PreallocationFailed(err))
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -363,7 +372,12 @@ impl SegmentWriter {
     fn new(dir: &Path, sequence: u64) -> Result<Self, Error> {
         let path = dir.join(segment_name(sequence));
         let file = open_segment_file(&path, true)?;
-        preallocate_segment(&file)?;
+
+        if let Err(e) = preallocate_segment(&file) {
+            drop(file);
+            let _ = fs::remove_file(&path);
+            return Err(e);
+        }
         sync_dir_path(dir)?;
 
         Ok(Self { file, offset: 0, sequence })

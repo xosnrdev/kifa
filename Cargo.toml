@@ -21,7 +21,7 @@ license = "MIT OR Apache-2.0"
 log = "0.4.29"
 
 [features]
-crash-test = []
+crash-test = ["lib-kifa/crash-test"]
 
 [dependencies]
 anyhow = "1.0.100"

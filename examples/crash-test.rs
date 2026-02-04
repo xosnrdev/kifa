@@ -286,34 +286,41 @@ fn parse_last_durable_lsn(stderr: ChildStderr) -> u64 {
     last_lsn
 }
 
-/// Kills all processes matching the given pattern in their command line.
-///
-/// This function enumerates all system processes and terminates those whose
-/// command line contains the specified pattern. This is necessary because the
-/// forceful kill can leave orphaned child processes.
-fn kill_processes_by_pattern(pattern: &str) {
+/// Refreshes the system process list once and returns the System handle.
+fn refreshed_system() -> System {
     let mut sys = System::new();
     sys.refresh_processes(ProcessesToUpdate::All, true);
+    sys
+}
 
-    for process in sys.processes().values() {
-        let cmd_line = process.cmd().join(OsStr::new(" "));
-        if cmd_line.to_string_lossy().contains(pattern) {
-            let _ = process.kill();
-        }
-    }
+/// Checks whether a process command line contains all given substrings.
+fn cmd_contains_all(process: &sysinfo::Process, parts: &[&str]) -> bool {
+    let cmd_line = process.cmd().join(OsStr::new(" "));
+    let lossy = cmd_line.to_string_lossy();
+    parts.iter().all(|part| lossy.contains(part))
 }
 
 /// Cleans up any orphaned test processes for the given cycle.
 ///
-/// After killing the main pipeline, there may be orphaned child processes
-/// that need to be cleaned up. This function waits briefly to allow the OS
-/// to complete process cleanup before proceeding.
+/// Refreshes the process list once and kills matching kifa daemon and
+/// gen-transactions processes in a single pass. Waits briefly afterward
+/// to allow the OS to complete process cleanup before proceeding.
 fn cleanup_orphaned_processes(data_dir: &Path, cycle: u64) {
-    let kifa_pattern = format!("kifa daemon.*{}", data_dir.display());
-    kill_processes_by_pattern(&kifa_pattern);
+    let sys = refreshed_system();
+    let data_dir = data_dir.display().to_string();
+    let cycle_seed = format!("-s {cycle}");
 
-    let gen_pattern = format!("gen-transactions.*-s {cycle}");
-    kill_processes_by_pattern(&gen_pattern);
+    for process in sys.processes().values() {
+        let name = process.name().to_string_lossy();
+        let is_orphan_kifa =
+            name.contains("kifa") && cmd_contains_all(process, &["daemon", &data_dir]);
+        let is_orphan_gen =
+            name.contains("gen-transactions") && cmd_contains_all(process, &[&cycle_seed]);
+
+        if is_orphan_kifa || is_orphan_gen {
+            let _ = process.kill();
+        }
+    }
 
     thread::sleep(Duration::from_secs(1));
 }
@@ -364,9 +371,19 @@ fn clear_lazyfs_cache(fifo_path: &Path, completed_fifo_path: &Path) -> Result<()
 /// This is called on program exit to ensure no test processes are left running.
 /// Targeting all instances regardless of cycle or data directory.
 fn cleanup_all_processes(data_dir: &Path) {
-    let kifa_pattern = format!("kifa daemon.*{}", data_dir.display());
-    kill_processes_by_pattern(&kifa_pattern);
-    kill_processes_by_pattern("gen-transactions");
+    let sys = refreshed_system();
+    let data_dir_str = data_dir.display().to_string();
+
+    for process in sys.processes().values() {
+        let name = process.name().to_string_lossy();
+        let is_kifa =
+            name.contains("kifa") && cmd_contains_all(process, &["daemon", &data_dir_str]);
+        let is_gen = name.contains("gen-transactions");
+
+        if is_kifa || is_gen {
+            let _ = process.kill();
+        }
+    }
 }
 
 /// Runs the `kifa` stats command and captures its output.

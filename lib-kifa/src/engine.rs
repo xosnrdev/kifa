@@ -7,6 +7,7 @@
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
+use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -962,14 +963,18 @@ fn acquire_lock(dir: &Path) -> Result<File, Error> {
 }
 
 fn cleanup_orphan_sstables(dir: &Path, manifest: &Manifest) -> Result<usize, Error> {
-    let registered_paths: Vec<_> = manifest.sstables().iter().map(|e| &e.path).collect();
+    let registered_names: Vec<_> = manifest
+        .sstables()
+        .iter()
+        .filter_map(|e| e.path.file_name().map(OsStr::to_owned))
+        .collect();
     let mut cleaned = 0;
 
     for entry in fs::read_dir(dir)? {
         let path = entry?.path();
 
         if path.extension().and_then(|s| s.to_str()).is_some_and(|ext| ext == "sst")
-            && !registered_paths.contains(&&path)
+            && path.file_name().is_none_or(|name| !registered_names.contains(&name.to_owned()))
         {
             fs::remove_file(&path)?;
             cleaned += 1;

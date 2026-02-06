@@ -151,7 +151,7 @@ jobs:
           files: |
             artifacts/kifa-*.tar.gz
             artifacts/kifa-*.tar.gz.sha256
-            artifacts/*.deb
-            artifacts/*.rpm
+            artifacts/**/*.deb
+            artifacts/**/*.rpm
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

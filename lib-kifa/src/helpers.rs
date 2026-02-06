@@ -22,7 +22,7 @@ pub fn sync_file(file: &File) {
 
 #[cfg(unix)]
 pub fn sync_dir(path: &Path) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         File::open(parent)?.sync_all()?;
     }
     Ok(())

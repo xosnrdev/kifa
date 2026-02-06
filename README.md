@@ -52,7 +52,7 @@ When your payment terminal loses power mid-transaction, Kifa keeps the data writ
 # Clone and build
 git clone https://github.com/xosnrdev/kifa.git
 cd kifa
-cargo build --release
+cargo cb
 
 # Start ingesting from stdin
 echo '{"txn":"TXN-001","amount":5000,"status":"completed"}' | \
@@ -93,7 +93,7 @@ Health:
 ```bash
 git clone https://github.com/xosnrdev/kifa.git
 cd kifa
-cargo build --release
+cargo cb
 ```
 
 Binary location: `./target/release/kifa`
@@ -347,11 +347,11 @@ kill -USR1 $(pgrep kifa)
 
 ### Performance Considerations
 
-| Mode        | Throughput Bottleneck              | Notes                                          |
-| ----------- | ---------------------------------- | ---------------------------------------------- |
-| `normal`    | pwrite syscall + memtable flush    | fsync amortized over 50 writes; ~7x cautious   |
-| `cautious`  | Storage fsync latency              | One fdatasync per append; hardware-dependent    |
-| `emergency` | Same as cautious                   | Compaction pause has no measurable impact       |
+| Mode        | Throughput Bottleneck           | Notes                                        |
+| ----------- | ------------------------------- | -------------------------------------------- |
+| `normal`    | pwrite syscall + memtable flush | fsync amortized over 50 writes; ~7x cautious |
+| `cautious`  | Storage fsync latency           | One fdatasync per append; hardware-dependent |
+| `emergency` | Same as cautious                | Compaction pause has no measurable impact    |
 
 Throughput scales with storage hardware. Run `cargo bp` on your target device for specific numbers.
 
@@ -452,11 +452,11 @@ Security hardening included:
 
 ### Signal Handling
 
-| Signal            | Action                                              |
-| ----------------- | --------------------------------------------------- |
-| `SIGINT` (Ctrl+C) | Graceful shutdown, flush pending data               |
-| `SIGTERM`         | Same as SIGINT (for systemd)                        |
-| `SIGUSR1`         | Escalate flush mode (Cautious → Emergency)          |
+| Signal            | Action                                     |
+| ----------------- | ------------------------------------------ |
+| `SIGINT` (Ctrl+C) | Graceful shutdown, flush pending data      |
+| `SIGTERM`         | Same as SIGINT (for systemd)               |
+| `SIGUSR1`         | Escalate flush mode (Cautious → Emergency) |
 
 Exit codes follow Unix convention:
 

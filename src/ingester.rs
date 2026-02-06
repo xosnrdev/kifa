@@ -227,7 +227,7 @@ mod tests {
 
         let entry = engine_read.get(1).unwrap();
         assert!(entry.is_some());
-        assert_eq!(entry.unwrap().data, b"test entry");
+        assert_eq!(&*entry.unwrap().data, b"test entry");
     }
 
     #[test]
@@ -253,7 +253,7 @@ mod tests {
 
         for (i, entry) in entries.iter().enumerate() {
             assert_eq!(entry.lsn, (i + 1) as u64);
-            assert_eq!(entry.data, format!("entry_{i}").into_bytes());
+            assert_eq!(&*entry.data, format!("entry_{i}").as_bytes());
         }
     }
 

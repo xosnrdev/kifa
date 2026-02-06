@@ -13,7 +13,7 @@ use std::os::unix::{fs::OpenOptionsExt, io::AsRawFd};
 use std::os::windows::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{self, Mutex};
+use std::sync::{self, Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fmt, io};
 
@@ -271,7 +271,7 @@ fn segment_name(sequence: u64) -> String {
 pub struct RecoveredEntry {
     pub lsn: u64,
     pub timestamp_ms: u64,
-    pub data: Vec<u8>,
+    pub data: Arc<[u8]>,
 }
 
 fn scan_segment(path: &Path) -> Result<(Vec<RecoveredEntry>, u64), Error> {
@@ -342,7 +342,7 @@ fn scan_segment(path: &Path) -> Result<(Vec<RecoveredEntry>, u64), Error> {
         let data_start = timestamp_end;
         let data_len = payload_len - LSN_SIZE - TIMESTAMP_SIZE - ENTRY_FOOTER_SIZE;
         let data_end = data_start + data_len;
-        let data = entry_buf.as_slice()[data_start..data_end].to_vec();
+        let data: Arc<[u8]> = entry_buf.as_slice()[data_start..data_end].into();
 
         let footer_start = data_end;
         let footer_end = footer_start + ENTRY_FOOTER_SIZE;

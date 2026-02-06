@@ -287,6 +287,8 @@ pub fn commit_compaction(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use tempfile::tempdir;
 
     use super::*;
@@ -306,7 +308,7 @@ mod tests {
         let mut memtable = Memtable::new();
         for i in 0..count {
             let lsn = lsn_start + i;
-            memtable.insert(lsn, 1000 + i, vec![lsn as u8; 10]);
+            memtable.insert(lsn, 1000 + i, Arc::from(vec![lsn as u8; 10]));
         }
 
         let min_lsn = lsn_start;

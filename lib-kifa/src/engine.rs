@@ -407,7 +407,7 @@ impl StorageEngine {
         let mut inner = self.inner.lock().unwrap_or_else(sync::PoisonError::into_inner);
 
         let (lsn, timestamp_ms) = self.wal.append(data)?;
-        inner.memtable.insert(lsn, timestamp_ms, data.to_vec());
+        inner.memtable.insert(lsn, timestamp_ms, Arc::from(data));
 
         if inner.memtable.size_bytes() >= self.config.memtable_flush_threshold {
             // Releases the lock before flushing to avoid deadlock.

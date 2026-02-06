@@ -7,6 +7,7 @@
 )]
 
 use std::str::FromStr;
+use std::sync::Arc;
 
 mod buffer;
 mod compaction;
@@ -140,7 +141,7 @@ pub struct Entry {
     pub timestamp_ms: u64,
 
     /// The raw payload bytes, stored as-is without interpretation.
-    pub data: Vec<u8>,
+    pub data: Arc<[u8]>,
 }
 
 impl Entry {
@@ -150,7 +151,7 @@ impl Entry {
     /// This is the logical size, not the on-disk size which includes
     /// checksums and alignment padding.
     #[must_use]
-    pub const fn size_bytes(&self) -> usize {
+    pub fn size_bytes(&self) -> usize {
         size_of::<u64>() + size_of::<u64>() + self.data.len()
     }
 }

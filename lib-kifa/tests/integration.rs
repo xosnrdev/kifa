@@ -175,7 +175,7 @@ fn test_get_returns_appended_entry_r1() {
     assert!(entry.is_some());
     let entry = entry.unwrap();
     assert_eq!(entry.lsn, lsn);
-    assert_eq!(entry.data, b"test_data");
+    assert_eq!(&*entry.data, b"test_data");
 }
 
 #[test]
@@ -199,7 +199,7 @@ fn test_get_reads_from_sstable_r1() {
 
     let entry = engine.get(lsn1).unwrap();
     assert!(entry.is_some());
-    assert_eq!(entry.unwrap().data, b"flushed_data");
+    assert_eq!(&*entry.unwrap().data, b"flushed_data");
 }
 
 #[test]
@@ -237,7 +237,7 @@ fn test_snapshot_isolation_r3() {
 
     let snapshot_entries: Vec<_> = snapshot.merge_iter().unwrap().collect();
     assert_eq!(snapshot_entries.len(), 1);
-    assert_eq!(snapshot_entries[0].data, b"before_snapshot");
+    assert_eq!(&*snapshot_entries[0].data, b"before_snapshot");
 }
 
 #[test]

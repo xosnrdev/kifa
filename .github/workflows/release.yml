@@ -105,7 +105,7 @@ jobs:
 
       - name: Install cargo-generate-rpm
         if: matrix.pkg
-        run: cargo install cargo-generate-rpm --locked
+        run: cargo install cargo-generate-rpm --locked --force
 
       - name: Build .rpm
         if: matrix.pkg

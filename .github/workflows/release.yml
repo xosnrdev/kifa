@@ -135,10 +135,19 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      - name: Detect pre-release
+        id: meta
+        run: |
+          case "${GITHUB_REF_NAME}" in
+            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
           files: |
             artifacts/kifa-*.tar.gz
             artifacts/kifa-*.tar.gz.sha256

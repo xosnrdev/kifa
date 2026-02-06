@@ -168,7 +168,9 @@ pub fn run_query(options: &QueryOptions) -> Result<u64, Error> {
     // Compaction is disabled because queries are read-only and should not mutate storage.
     let config = Config { compaction_enabled: false, ..Config::default() };
     let (engine, _) = StorageEngine::open(&options.data_dir, config)?;
+    let stats = engine.stats();
     let entries = engine.scan(from, to)?;
+    let scan_count = entries.len();
 
     let mut count = 0;
     let stdout = io::stdout();
@@ -187,6 +189,20 @@ pub fn run_query(options: &QueryOptions) -> Result<u64, Error> {
     }
 
     writer.flush()?;
+
+    if count == 0 && stats.wal.last_durable_lsn > 0 {
+        if scan_count == 0 {
+            eprintln!(
+                "No entries in LSN range. Storage has LSNs 1..={}",
+                stats.wal.last_durable_lsn
+            );
+        } else {
+            eprintln!(
+                "{scan_count} entries matched the LSN range but none matched the time filter"
+            );
+        }
+    }
+
     Ok(count)
 }
 
@@ -208,7 +224,9 @@ pub fn run_export(options: &QueryOptions) -> Result<u64, Error> {
 
     let config = Config { compaction_enabled: false, ..Config::default() };
     let (engine, _) = StorageEngine::open(&options.data_dir, config)?;
+    let stats = engine.stats();
     let entries = engine.scan(from, to)?;
+    let scan_count = entries.len();
 
     let file = File::create(&temp_path)?;
     let mut guard = TempFileGuard::new(&temp_path);
@@ -238,6 +256,20 @@ pub fn run_export(options: &QueryOptions) -> Result<u64, Error> {
     guard.disarm();
 
     log::info!("Exported {count} entries to {}", output_path.display());
+
+    if count == 0 && stats.wal.last_durable_lsn > 0 {
+        if scan_count == 0 {
+            eprintln!(
+                "No entries in LSN range. Storage has LSNs 1..={}",
+                stats.wal.last_durable_lsn
+            );
+        } else {
+            eprintln!(
+                "{scan_count} entries matched the LSN range but none matched the time filter"
+            );
+        }
+    }
+
     Ok(count)
 }
 

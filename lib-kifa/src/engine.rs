@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{self, Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
-use std::{fmt, io, vec};
+use std::{fmt, io};
 
 use crate::compaction::{self, commit_compaction, prepare_compaction, run_compaction};
 use crate::helpers::HeapEntry;
@@ -623,8 +623,8 @@ impl StorageEngine {
     /// // The snapshot captures state at creation time; later writes are invisible.
     /// engine.append(b"new data").unwrap();
     ///
-    /// // Iterating the snapshot yields only entries that existed before the append.
-    /// for entry in snapshot {
+    /// let entries = snapshot.scan(1, u64::MAX).unwrap();
+    /// for entry in &entries {
     ///     println!("[{}] {:?}", entry.lsn, entry.data);
     /// }
     /// ```
@@ -691,10 +691,15 @@ impl ReadSnapshot {
             }
 
             let reader = SstableReader::open(&sstable.path)?;
-            for entry in reader {
+            let mut iter = reader.iter();
+            for entry in iter.by_ref() {
                 if entry.lsn == lsn {
                     return Ok(Some(entry));
                 }
+            }
+
+            if let Some(e) = iter.take_error() {
+                return Err(e.into());
             }
         }
 
@@ -709,9 +714,9 @@ impl ReadSnapshot {
     pub fn scan(&self, start_lsn: u64, end_lsn: u64) -> Result<Vec<Entry>, Error> {
         let mut result = Vec::new();
 
-        let iter =
+        let mut iter =
             MergeIter::new(Arc::clone(&self.memtable_entries), self.sstable_entries.clone())?;
-        for entry in iter {
+        for entry in iter.by_ref() {
             if entry.lsn < start_lsn {
                 continue;
             }
@@ -719,6 +724,10 @@ impl ReadSnapshot {
                 break;
             }
             result.push(entry);
+        }
+
+        if let Some(e) = iter.take_error() {
+            return Err(e);
         }
 
         Ok(result)
@@ -731,18 +740,6 @@ impl ReadSnapshot {
     /// Returns an error if `SSTable` files cannot be opened.
     pub fn merge_iter(&self) -> Result<MergeIter, Error> {
         MergeIter::new(Arc::clone(&self.memtable_entries), self.sstable_entries.clone())
-    }
-}
-
-impl IntoIterator for ReadSnapshot {
-    type Item = Entry;
-    type IntoIter = vec::IntoIter<Entry>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        match self.merge_iter() {
-            Ok(iter) => iter.collect::<Vec<_>>().into_iter(),
-            Err(_) => Vec::new().into_iter(),
-        }
     }
 }
 

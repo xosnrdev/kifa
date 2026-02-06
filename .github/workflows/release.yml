@@ -1,0 +1,157 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            pkg: true
+
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            pkg: false
+
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            pkg: true
+
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            pkg: false
+
+          - target: arm-unknown-linux-gnueabihf
+            runner: ubuntu-latest
+            pkg: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-${{ runner.arch }}-release-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install nightly --no-self-update --profile minimal --component rust-src
+          rustup target add ${{ matrix.target }}
+
+      - name: Install cross-compilation dependencies
+        run: |
+          case "${{ matrix.target }}" in
+            x86_64-unknown-linux-musl)
+              sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+              ;;
+            aarch64-unknown-linux-musl)
+              sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+              ;;
+            arm-unknown-linux-gnueabihf)
+              sudo apt-get update && sudo apt-get install -y --no-install-recommends crossbuild-essential-armhf
+              ;;
+          esac
+
+      - name: Build
+        run: cargo cb --target ${{ matrix.target }}
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CC_aarch64_unknown_linux_musl: musl-gcc
+          CC_arm_unknown_linux_gnueabihf: arm-linux-gnueabihf-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
+
+      - name: Determine version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Create tarball
+        run: |
+          STAGING="kifa-${{ steps.version.outputs.version }}-${{ matrix.target }}"
+          mkdir "$STAGING"
+          cp "target/${{ matrix.target }}/release/kifa" "$STAGING/"
+          cp systemd/kifa.service "$STAGING/"
+          cp LICENSE-MIT LICENSE-APACHE README.md "$STAGING/"
+          tar czf "$STAGING.tar.gz" "$STAGING"
+          shasum -a 256 "$STAGING.tar.gz" > "$STAGING.tar.gz.sha256"
+
+      - name: Install cargo-deb
+        if: matrix.pkg
+        run: cargo install cargo-deb --locked --force
+
+      - name: Build .deb
+        if: matrix.pkg
+        run: cargo deb --no-build --target ${{ matrix.target }}
+
+      - name: Install cargo-generate-rpm
+        if: matrix.pkg
+        run: cargo install cargo-generate-rpm --locked --force
+
+      - name: Build .rpm
+        if: matrix.pkg
+        run: cargo generate-rpm --target ${{ matrix.target }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.target }}
+          path: |
+            kifa-*.tar.gz
+            kifa-*.tar.gz.sha256
+            target/${{ matrix.target }}/debian/*.deb
+            target/${{ matrix.target }}/generate-rpm/*.rpm
+          if-no-files-found: ignore
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Detect pre-release
+        id: meta
+        run: |
+          case "${GITHUB_REF_NAME}" in
+            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          files: |
+            artifacts/kifa-*.tar.gz
+            artifacts/kifa-*.tar.gz.sha256
+            artifacts/**/*.deb
+            artifacts/**/*.rpm
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

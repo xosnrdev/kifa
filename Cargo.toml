@@ -6,16 +6,43 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 rust-version = "1.93.0"
+repository.workspace = true
+keywords = ["logging", "crash-proof", "pos", "edge", "storage-engine"]
+categories = ["database-implementations", "command-line-utilities"]
+
+[package.metadata.deb]
+maintainer = "Success Kingsley <xosnrdev@gmail.com>"
+section = "utils"
+priority = "optional"
+depends = "libc6"
+assets = [
+    ["target/release/kifa", "usr/bin/", "755"],
+    ["systemd/kifa.service", "usr/lib/systemd/system/kifa.service", "644"],
+    ["README.md", "usr/share/doc/kifa/README.md", "644"],
+    ["LICENSE-MIT", "usr/share/doc/kifa/LICENSE-MIT", "644"],
+    ["LICENSE-APACHE", "usr/share/doc/kifa/LICENSE-APACHE", "644"],
+]
+systemd-units = { unit-name = "kifa", enable = false, start = false }
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/kifa", dest = "/usr/bin/kifa", mode = "755" },
+    { source = "systemd/kifa.service", dest = "/usr/lib/systemd/system/kifa.service", mode = "644" },
+    { source = "README.md", dest = "/usr/share/doc/kifa/README.md", mode = "644", doc = true },
+    { source = "LICENSE-MIT", dest = "/usr/share/doc/kifa/LICENSE-MIT", mode = "644", doc = true },
+    { source = "LICENSE-APACHE", dest = "/usr/share/doc/kifa/LICENSE-APACHE", mode = "644", doc = true },
+]
 
 [workspace]
 resolver = "3"
 members = [".", "lib-kifa"]
 
 [workspace.package]
-version = "0.1.0"
+version = "1.0.0-rc.1"
 edition = "2024"
 authors = ["Success Kingsley <xosnrdev@gmail.com>"]
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/xosnrdev/kifa"
 
 [workspace.dependencies]
 log = "0.4.29"

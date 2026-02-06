@@ -9,12 +9,13 @@
   <a href="#quick-start">Quick Start</a> •
   <a href="#installation">Installation</a> •
   <a href="#usage">Usage</a> •
-  <a href="#security-considerations">Security Considerations</a> •
   <a href="#configuration">Configuration</a> •
-  <a href="#crash-testing">Crash Testing</a> •
   <a href="#architecture">Architecture</a> •
   <a href="#deployment">Deployment</a> •
-  <a href="#contributing">Contributing</a>
+  <a href="#security-considerations">Security Considerations</a> •
+  <a href="#contributing">Contributing</a> •
+  <a href="#crash-testing">Crash Testing</a> •
+  <a href="#license">License</a>
 </p>
 
 ## What is Kifa?
@@ -83,12 +84,42 @@ Health:
 
 ## Installation
 
-### Requirements
+### Pre-built Binaries
 
-- **Rust 1.93.0+** (nightly toolchain)
-- **Supported platforms**: Linux (recommended), macOS, Windows
+Download the latest release from [GitHub Releases](https://github.com/xosnrdev/kifa/releases/latest).
+
+| Architecture | Targets                                                   |
+| ------------ | --------------------------------------------------------- |
+| x86_64       | `x86_64-unknown-linux-gnu`, `x86_64-unknown-linux-musl`   |
+| ARM64        | `aarch64-unknown-linux-gnu`, `aarch64-unknown-linux-musl` |
+| ARM32        | `arm-unknown-linux-gnueabihf`                             |
+
+```bash
+tar xzf kifa-<version>-<target>.tar.gz
+sudo cp kifa-<version>-<target>/kifa /usr/bin/
+```
+
+Each tarball includes the binary, a systemd service file, and license files.
+
+### Debian / Ubuntu
+
+Download `.deb` files from [GitHub Releases](https://github.com/xosnrdev/kifa/releases/latest). Available architectures: `amd64`, `arm64`, `armhf`.
+
+```bash
+sudo dpkg -i kifa_<version>-1_<arch>.deb
+```
+
+### Red Hat / Fedora
+
+Download `.rpm` files from [GitHub Releases](https://github.com/xosnrdev/kifa/releases/latest). Available architectures: `x86_64`, `aarch64`, `armv7hl`.
+
+```bash
+sudo rpm -i kifa-<version>-1.<arch>.rpm
+```
 
 ### Building from Source
+
+Requires Rust 1.93.0+ (nightly toolchain). Supported platforms: Linux (recommended), macOS, Windows.
 
 ```bash
 git clone https://github.com/xosnrdev/kifa.git
@@ -97,6 +128,12 @@ cargo cb
 ```
 
 Binary location: `./target/release/kifa`
+
+`cargo cb` uses `build-std` and `panic-immediate-abort` for a smaller binary. For a quick install without these optimizations:
+
+```bash
+cargo install --git https://github.com/xosnrdev/kifa.git
+```
 
 ### Building with Examples
 

@@ -53,7 +53,9 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-release-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install Rust
-        run: rustup toolchain install nightly --no-self-update --profile minimal --component rust-src
+        run: |
+          rustup toolchain install nightly --no-self-update --profile minimal --component rust-src
+          rustup target add ${{ matrix.target }}
 
       - name: Install cross-compilation dependencies
         run: |

@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::fs::File;
 use std::io;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::KIBI;
 
@@ -47,7 +48,7 @@ pub fn sync_dir_path(_path: &Path) -> io::Result<()> {
 pub struct HeapEntry {
     pub lsn: u64,
     pub timestamp_ms: u64,
-    pub data: Vec<u8>,
+    pub data: Arc<[u8]>,
     pub source_idx: usize,
 }
 

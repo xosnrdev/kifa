@@ -407,7 +407,7 @@ impl StorageEngine {
         let mut inner = self.inner.lock().unwrap_or_else(sync::PoisonError::into_inner);
 
         let (lsn, timestamp_ms) = self.wal.append(data)?;
-        inner.memtable.insert(lsn, timestamp_ms, data.to_vec());
+        inner.memtable.insert(lsn, timestamp_ms, Arc::from(data));
 
         if inner.memtable.size_bytes() >= self.config.memtable_flush_threshold {
             // Releases the lock before flushing to avoid deadlock.
@@ -770,15 +770,13 @@ impl MergeIter {
         let mut sources = Vec::with_capacity(1 + sstable_entries.len());
         let mut heap = BinaryHeap::new();
 
-        if memtable_entries.is_empty() {
-            sources.push(Source::Memtable { entries: memtable_entries, pos: 0 });
-        } else {
+        if !memtable_entries.is_empty() {
             let first = &memtable_entries[0];
             heap.push(Reverse(HeapEntry {
                 lsn: first.lsn,
                 timestamp_ms: first.timestamp_ms,
                 data: first.data.clone(),
-                source_idx: 0,
+                source_idx: sources.len(),
             }));
             sources.push(Source::Memtable { entries: memtable_entries, pos: 1 });
         }

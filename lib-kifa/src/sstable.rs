@@ -7,6 +7,7 @@
 use std::fs::{File, OpenOptions, remove_file};
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::{fmt, fs};
 
 use crate::common::{atomic_rename, temp_path};
@@ -303,16 +304,17 @@ impl SstableReader {
             return Err(Error::EntryTooLarge { size: len, max: MAX_ENTRY_SIZE });
         }
 
-        let mut data = vec![0; len];
-        self.reader.read_exact(&mut data)?;
+        let mut data_buf = vec![0; len];
+        self.reader.read_exact(&mut data_buf)?;
 
         self.hasher.update(&lsn_bytes);
         self.hasher.update(&timestamp_bytes);
         self.hasher.update(&length_bytes);
-        self.hasher.update(&data);
+        self.hasher.update(&data_buf);
 
         self.entries_read += 1;
 
+        let data: Arc<[u8]> = data_buf.into();
         Ok(Some(Entry { lsn, timestamp_ms, data }))
     }
 
@@ -484,7 +486,7 @@ mod tests {
         let path = temp_dir.path().join("test.sst");
 
         let mut memtable = Memtable::new();
-        memtable.insert(1, 1000, vec![0xAB; 100]);
+        memtable.insert(1, 1000, Arc::from(vec![0xAB; 100]));
 
         let info = flush_memtable(&memtable, &path).unwrap();
 
@@ -502,7 +504,7 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].lsn, 1);
         assert_eq!(entries[0].timestamp_ms, 1000);
-        assert_eq!(entries[0].data, vec![0xAB; 100]);
+        assert_eq!(&*entries[0].data, &vec![0xAB; 100]);
     }
 
     #[test]
@@ -511,9 +513,9 @@ mod tests {
         let path = temp_dir.path().join("test.sst");
 
         let mut memtable = Memtable::new();
-        memtable.insert(10, 1000, vec![0x0A; 50]);
-        memtable.insert(20, 2000, vec![0x14; 100]);
-        memtable.insert(30, 3000, vec![0x1E; 150]);
+        memtable.insert(10, 1000, Arc::from(vec![0x0A; 50]));
+        memtable.insert(20, 2000, Arc::from(vec![0x14; 100]));
+        memtable.insert(30, 3000, Arc::from(vec![0x1E; 150]));
 
         let info = flush_memtable(&memtable, &path).unwrap();
 
@@ -538,7 +540,7 @@ mod tests {
         let path = temp_dir.path().join("test.sst");
 
         let mut memtable = Memtable::new();
-        memtable.insert(1, 1000, vec![0x01]);
+        memtable.insert(1, 1000, Arc::from(vec![0x01]));
 
         flush_memtable(&memtable, &path).unwrap();
 
@@ -571,7 +573,7 @@ mod tests {
         let path = temp_dir.path().join("test.sst");
 
         let mut memtable = Memtable::new();
-        memtable.insert(1, 1000, vec![0x01; 100]);
+        memtable.insert(1, 1000, Arc::from(vec![0x01; 100]));
 
         flush_memtable(&memtable, &path).unwrap();
 
@@ -601,7 +603,7 @@ mod tests {
 
         let mut memtable = Memtable::new();
         for i in 1..=10 {
-            memtable.insert(i, 1000 + i, vec![i as u8; (i * 10) as usize]);
+            memtable.insert(i, 1000 + i, Arc::from(vec![i as u8; (i * 10) as usize]));
         }
 
         flush_memtable(&memtable, &path).unwrap();
@@ -617,7 +619,7 @@ mod tests {
         let path = temp_dir.path().join("test.sst");
 
         let mut memtable = Memtable::new();
-        memtable.insert(1, 1000, vec![0xAB; 100]);
+        memtable.insert(1, 1000, Arc::from(vec![0xAB; 100]));
 
         flush_memtable(&memtable, &path).unwrap();
 

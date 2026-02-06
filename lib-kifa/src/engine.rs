@@ -770,15 +770,13 @@ impl MergeIter {
         let mut sources = Vec::with_capacity(1 + sstable_entries.len());
         let mut heap = BinaryHeap::new();
 
-        if memtable_entries.is_empty() {
-            sources.push(Source::Memtable { entries: memtable_entries, pos: 0 });
-        } else {
+        if !memtable_entries.is_empty() {
             let first = &memtable_entries[0];
             heap.push(Reverse(HeapEntry {
                 lsn: first.lsn,
                 timestamp_ms: first.timestamp_ms,
                 data: first.data.clone(),
-                source_idx: 0,
+                source_idx: sources.len(),
             }));
             sources.push(Source::Memtable { entries: memtable_entries, pos: 1 });
         }

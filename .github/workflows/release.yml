@@ -97,7 +97,7 @@ jobs:
 
       - name: Install cargo-deb
         if: matrix.pkg
-        run: cargo install cargo-deb --locked
+        run: cargo install cargo-deb --locked --force
 
       - name: Build .deb
         if: matrix.pkg

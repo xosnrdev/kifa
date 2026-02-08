@@ -486,7 +486,7 @@ mod tests {
         let path = temp_dir.path().join("test.sst");
 
         let mut memtable = Memtable::new();
-        memtable.insert(1, 1000, Arc::from(vec![0xAB; 100]));
+        memtable.insert(1, 1000, Arc::from([0xAB; 100]));
 
         let info = flush_memtable(&memtable, &path).unwrap();
 
@@ -513,9 +513,9 @@ mod tests {
         let path = temp_dir.path().join("test.sst");
 
         let mut memtable = Memtable::new();
-        memtable.insert(10, 1000, Arc::from(vec![0x0A; 50]));
-        memtable.insert(20, 2000, Arc::from(vec![0x14; 100]));
-        memtable.insert(30, 3000, Arc::from(vec![0x1E; 150]));
+        memtable.insert(10, 1000, Arc::from([0x0A; 50]));
+        memtable.insert(20, 2000, Arc::from([0x14; 100]));
+        memtable.insert(30, 3000, Arc::from([0x1E; 150]));
 
         let info = flush_memtable(&memtable, &path).unwrap();
 
@@ -540,7 +540,7 @@ mod tests {
         let path = temp_dir.path().join("test.sst");
 
         let mut memtable = Memtable::new();
-        memtable.insert(1, 1000, Arc::from(vec![0x01]));
+        memtable.insert(1, 1000, Arc::from([0x01]));
 
         flush_memtable(&memtable, &path).unwrap();
 
@@ -573,7 +573,7 @@ mod tests {
         let path = temp_dir.path().join("test.sst");
 
         let mut memtable = Memtable::new();
-        memtable.insert(1, 1000, Arc::from(vec![0x01; 100]));
+        memtable.insert(1, 1000, Arc::from([0x01; 100]));
 
         flush_memtable(&memtable, &path).unwrap();
 
@@ -603,7 +603,8 @@ mod tests {
 
         let mut memtable = Memtable::new();
         for i in 1..=10 {
-            memtable.insert(i, 1000 + i, Arc::from(vec![i as u8; (i * 10) as usize]));
+            let data: Arc<[u8]> = std::iter::repeat_n(i as u8, (i * 10) as usize).collect();
+            memtable.insert(i, 1000 + i, data);
         }
 
         flush_memtable(&memtable, &path).unwrap();
@@ -619,7 +620,7 @@ mod tests {
         let path = temp_dir.path().join("test.sst");
 
         let mut memtable = Memtable::new();
-        memtable.insert(1, 1000, Arc::from(vec![0xAB; 100]));
+        memtable.insert(1, 1000, Arc::from([0xAB; 100]));
 
         flush_memtable(&memtable, &path).unwrap();
 

@@ -577,11 +577,8 @@ mod tests {
 
     #[test]
     fn test_format_json_binary() {
-        let entry = Entry {
-            lsn: 99,
-            timestamp_ms: 1_769_688_000_000,
-            data: Arc::from(vec![0x00, 0xFF, 0x80]),
-        };
+        let entry =
+            Entry { lsn: 99, timestamp_ms: 1_769_688_000_000, data: Arc::from([0x00, 0xFF, 0x80]) };
         let mut buf = Vec::new();
         write_entry_json(&mut buf, &entry).unwrap();
         assert_eq!(
@@ -592,11 +589,8 @@ mod tests {
 
     #[test]
     fn test_format_json_control_chars() {
-        let entry = Entry {
-            lsn: 7,
-            timestamp_ms: 1_769_688_000_000,
-            data: Arc::from(vec![0x01, 0x1F, 0x7F]),
-        };
+        let entry =
+            Entry { lsn: 7, timestamp_ms: 1_769_688_000_000, data: Arc::from([0x01, 0x1F, 0x7F]) };
         let mut buf = Vec::new();
         write_entry_json(&mut buf, &entry).unwrap();
         assert_eq!(
@@ -637,7 +631,7 @@ mod tests {
         let entry = Entry {
             lsn: 12,
             timestamp_ms: 1_769_688_000_000,
-            data: Arc::from(vec![0xDE, 0xAD, 0xBE, 0xEF]),
+            data: Arc::from([0xDE, 0xAD, 0xBE, 0xEF]),
         };
         let mut buf = Vec::new();
         write_entry_csv(&mut buf, &entry).unwrap();
@@ -659,7 +653,7 @@ mod tests {
     #[test]
     fn test_format_hex() {
         let entry =
-            Entry { lsn: 256, timestamp_ms: 1_769_688_000_000, data: Arc::from(vec![0xCA, 0xFE]) };
+            Entry { lsn: 256, timestamp_ms: 1_769_688_000_000, data: Arc::from([0xCA, 0xFE]) };
         let mut buf = Vec::new();
         write_entry_hex(&mut buf, &entry).unwrap();
         assert_eq!(buf, b"0000000000000100 0000019c099fe600 cafe\n");

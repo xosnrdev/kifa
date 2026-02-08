@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn test_insert_updates_state() {
         let mut mt = Memtable::new();
-        mt.insert(1, 1000, Arc::from(vec![0xAB; 100]));
+        mt.insert(1, 1000, Arc::from([0xAB; 100]));
 
         assert_eq!(mt.len(), 1);
         assert_eq!(mt.size_bytes(), 2 * size_of::<u64>() + 100);
@@ -106,9 +106,9 @@ mod tests {
     #[test]
     fn test_insert_multiple_monotonic_lsn() {
         let mut mt = Memtable::new();
-        mt.insert(1, 1000, Arc::from(vec![0x01; 10]));
-        mt.insert(5, 2000, Arc::from(vec![0x05; 20]));
-        mt.insert(100, 3000, Arc::from(vec![0x64; 30]));
+        mt.insert(1, 1000, Arc::from([0x01; 10]));
+        mt.insert(5, 2000, Arc::from([0x05; 20]));
+        mt.insert(100, 3000, Arc::from([0x64; 30]));
 
         assert_eq!(mt.len(), 3);
         assert_eq!(mt.last_lsn(), 100);
@@ -121,22 +121,22 @@ mod tests {
     #[should_panic(expected = "lsn 1 must be greater than last_lsn 5")]
     fn test_insert_non_monotonic_lsn_panics() {
         let mut mt = Memtable::new();
-        mt.insert(5, 1000, Arc::from(vec![0x05; 10]));
-        mt.insert(1, 2000, Arc::from(vec![0x01; 10]));
+        mt.insert(5, 1000, Arc::from([0x05; 10]));
+        mt.insert(1, 2000, Arc::from([0x01; 10]));
     }
 
     #[test]
     #[should_panic(expected = "lsn 5 must be greater than last_lsn 5")]
     fn test_insert_duplicate_lsn_panics() {
         let mut mt = Memtable::new();
-        mt.insert(5, 1000, Arc::from(vec![0x05; 10]));
-        mt.insert(5, 2000, Arc::from(vec![0x05; 10]));
+        mt.insert(5, 1000, Arc::from([0x05; 10]));
+        mt.insert(5, 2000, Arc::from([0x05; 10]));
     }
 
     #[test]
     fn test_freeze_sets_frozen_flag() {
         let mut mt = Memtable::new();
-        mt.insert(1, 1000, Arc::from(vec![0x01; 10]));
+        mt.insert(1, 1000, Arc::from([0x01; 10]));
         mt.freeze();
 
         assert!(mt.is_frozen());
@@ -147,15 +147,15 @@ mod tests {
     fn test_insert_on_frozen_panics() {
         let mut mt = Memtable::new();
         mt.freeze();
-        mt.insert(1, 1000, Arc::from(vec![0x01; 10]));
+        mt.insert(1, 1000, Arc::from([0x01; 10]));
     }
 
     #[test]
     fn test_iter_yields_lsn_order() {
         let mut mt = Memtable::new();
-        mt.insert(10, 1000, Arc::from(vec![0x0A]));
-        mt.insert(20, 2000, Arc::from(vec![0x14]));
-        mt.insert(30, 3000, Arc::from(vec![0x1E]));
+        mt.insert(10, 1000, Arc::from([0x0A]));
+        mt.insert(20, 2000, Arc::from([0x14]));
+        mt.insert(30, 3000, Arc::from([0x1E]));
 
         let lsns: Vec<_> = mt.iter().map(|e| e.lsn).collect();
         assert_eq!(lsns, vec![10, 20, 30]);
@@ -163,15 +163,15 @@ mod tests {
 
     #[test]
     fn test_entry_size_bytes() {
-        let entry = Entry { lsn: 42, timestamp_ms: 1000, data: Arc::from(vec![0; 100]) };
+        let entry = Entry { lsn: 42, timestamp_ms: 1000, data: Arc::from([0; 100]) };
         assert_eq!(entry.size_bytes(), 2 * size_of::<u64>() + 100);
     }
 
     #[test]
     fn test_clear_resets_state() {
         let mut mt = Memtable::new();
-        mt.insert(1, 1000, Arc::from(vec![0x01; 10]));
-        mt.insert(2, 2000, Arc::from(vec![0x02; 20]));
+        mt.insert(1, 1000, Arc::from([0x01; 10]));
+        mt.insert(2, 2000, Arc::from([0x02; 20]));
         mt.clear();
 
         assert!(mt.is_empty());
@@ -184,7 +184,7 @@ mod tests {
     #[should_panic(expected = "clear on frozen memtable")]
     fn test_clear_on_frozen_panics() {
         let mut mt = Memtable::new();
-        mt.insert(1, 1000, Arc::from(vec![0x01; 10]));
+        mt.insert(1, 1000, Arc::from([0x01; 10]));
         mt.freeze();
         mt.clear();
     }
@@ -192,9 +192,9 @@ mod tests {
     #[test]
     fn test_insert_after_clear_allows_any_lsn() {
         let mut mt = Memtable::new();
-        mt.insert(100, 1000, Arc::from(vec![0x64; 10]));
+        mt.insert(100, 1000, Arc::from([0x64; 10]));
         mt.clear();
-        mt.insert(1, 2000, Arc::from(vec![0x01; 10]));
+        mt.insert(1, 2000, Arc::from([0x01; 10]));
 
         assert_eq!(mt.last_lsn(), 1);
         assert_eq!(mt.len(), 1);

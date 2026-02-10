@@ -83,3 +83,8 @@ panic = "abort"
 split-debuginfo = "packed"
 strip = "symbols"
 incremental = true
+
+[profile.profiling]
+inherits = "release"
+strip = "none"
+split-debuginfo = "off"

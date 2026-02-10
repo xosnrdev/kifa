@@ -63,6 +63,7 @@ pub mod common {
 ///
 /// Throughput depends on storage hardware. Consumer SSDs typically achieve
 /// 100-300 fsyncs/sec; enterprise `NVMe` with power-loss protection can exceed 30,000.
+#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlushMode {
     /// Batches fsync calls for maximum throughput at the cost of durability.
@@ -75,7 +76,7 @@ pub enum FlushMode {
     ///
     /// This mode trades durability for throughput. Use only when losing recent
     /// entries is acceptable. For financial or audit-critical data, use `Cautious`.
-    Normal,
+    Normal = 0,
 
     /// Fsyncs after every write for immediate durability.
     ///
@@ -84,14 +85,14 @@ pub enum FlushMode {
     /// occurs on power failure for entries where `append()` returned successfully.
     ///
     /// This is the recommended default for financial and audit-critical workloads.
-    Cautious,
+    Cautious = 1,
 
     /// Maximum durability mode for imminent power failure.
     ///
     /// Behaves like `Cautious` (fsync every write) but also pauses background
     /// compaction to minimize disk I/O. Use when brown-out detection triggers
     /// or UPS signals low battery. Escalate to this mode via SIGUSR1.
-    Emergency,
+    Emergency = 2,
 }
 
 impl FromStr for FlushMode {
@@ -112,6 +113,19 @@ impl FlushMode {
     #[must_use]
     pub const fn is_durable(self) -> bool {
         matches!(self, Self::Cautious | Self::Emergency)
+    }
+}
+
+impl TryFrom<u8> for FlushMode {
+    type Error = &'static str;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Normal),
+            1 => Ok(Self::Cautious),
+            2 => Ok(Self::Emergency),
+            _ => Err("invalid flush mode value"),
+        }
     }
 }
 

@@ -74,9 +74,7 @@ fn tag_and_send(
         return Ok(true);
     }
 
-    let mut tagged = Vec::with_capacity(prefix.len() + line.len());
-    tagged.extend_from_slice(prefix);
-    tagged.extend_from_slice(line);
+    let mut tagged = [prefix, line].concat();
 
     let mut backoff = BACKOFF_INITIAL;
 
@@ -116,17 +114,29 @@ impl StdinSource {
 impl Source for StdinSource {
     fn run(self, handle: IngesterHandle) -> Result<(), Error> {
         let stdin = io::stdin();
-        let reader = BufReader::with_capacity(LINE_BUFFER_CAPACITY, stdin.lock());
+        // read_until operates on raw bytes, avoiding the per-line UTF-8
+        // validation that BufRead::lines() performs internally.
+        let mut reader = BufReader::with_capacity(LINE_BUFFER_CAPACITY, stdin.lock());
         let prefix = b"[stdin] ";
+        let mut line_buf = Vec::with_capacity(LINE_BUFFER_CAPACITY);
 
-        for line_result in reader.lines() {
+        loop {
             if self.shutdown.load(Ordering::Relaxed) {
                 break;
             }
 
-            let line = line_result?;
-            let trimmed = line.trim_end_matches(['\n', '\r']);
-            if tag_and_send(&handle, prefix, trimmed.as_bytes(), &self.shutdown)? {
+            line_buf.clear();
+            let bytes_read = reader.read_until(b'\n', &mut line_buf)?;
+            if bytes_read == 0 {
+                break;
+            }
+
+            let mut end = line_buf.len();
+            while end > 0 && matches!(line_buf[end - 1], b'\n' | b'\r') {
+                end -= 1;
+            }
+
+            if tag_and_send(&handle, prefix, &line_buf[..end], &self.shutdown)? {
                 break;
             }
         }

@@ -12,7 +12,7 @@ use std::os::unix::{fs::OpenOptionsExt, io::AsRawFd};
 #[cfg(windows)]
 use std::os::windows::fs::FileExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{self, Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fmt, io};
@@ -29,6 +29,7 @@ const ENTRY_FOOTER_SIZE: usize = size_of::<EntryFooter>();
 const LSN_SIZE: usize = size_of::<u64>();
 const TIMESTAMP_SIZE: usize = size_of::<u64>();
 const ENTRY_OVERHEAD: usize = ENTRY_HEADER_SIZE + LSN_SIZE + TIMESTAMP_SIZE + ENTRY_FOOTER_SIZE;
+const MAX_WRITE_BUF_SIZE: usize = (MAX_ENTRY_SIZE + ENTRY_OVERHEAD).next_multiple_of(SECTOR_SIZE);
 
 const _: () = {
     assert!(ENTRY_HEADER_SIZE == 8);
@@ -36,6 +37,7 @@ const _: () = {
     assert!(LSN_SIZE == 8);
     assert!(TIMESTAMP_SIZE == 8);
     assert!(ENTRY_OVERHEAD == 40);
+    assert!(MAX_WRITE_BUF_SIZE == 1_052_672);
     assert!(SEGMENT_SIZE.is_multiple_of(SECTOR_SIZE));
 };
 
@@ -123,16 +125,23 @@ struct EntryFooter {
 impl EntryFooter {
     fn new(lsn: u64, timestamp_ms: u64, data: &[u8]) -> Self {
         let mut hasher = crc32fast::Hasher::new();
-        hasher.update(&lsn.to_le_bytes());
-        hasher.update(&timestamp_ms.to_le_bytes());
+        // Coalesces lsn and timestamp into one 16-byte update to halve
+        // the per-entry hasher state finalization overhead.
+        let mut prefix = [0; 16];
+        prefix[..8].copy_from_slice(&lsn.to_le_bytes());
+        prefix[8..16].copy_from_slice(&timestamp_ms.to_le_bytes());
+        hasher.update(&prefix);
         hasher.update(data);
         Self { data_crc: hasher.finalize(), padding: 0, magic: MAGIC_TRAILER }
     }
 
     fn validate(&self, lsn: u64, timestamp_ms: u64, data: &[u8]) -> bool {
         let mut hasher = crc32fast::Hasher::new();
-        hasher.update(&lsn.to_le_bytes());
-        hasher.update(&timestamp_ms.to_le_bytes());
+        // Mirrors the coalesced layout from `new` so CRC values match.
+        let mut prefix = [0; 16];
+        prefix[..8].copy_from_slice(&lsn.to_le_bytes());
+        prefix[8..16].copy_from_slice(&timestamp_ms.to_le_bytes());
+        hasher.update(&prefix);
         hasher.update(data);
         self.magic == MAGIC_TRAILER && self.data_crc == hasher.finalize()
     }
@@ -279,9 +288,9 @@ fn scan_segment(path: &Path) -> Result<(Vec<RecoveredEntry>, u64), Error> {
     let mut entries = Vec::new();
     let mut offset = 0;
 
-    // pread(2) reads into buf before returning. Uninitialized memory is
-    // sound because the caller only accesses bytes within bytes_read.
     let mut header_buf = AlignedBuffer::new_uninit(SECTOR_SIZE);
+    // Allocated once outside the loop to avoid per-entry heap allocation.
+    let mut entry_buf = AlignedBuffer::new_uninit(MAX_WRITE_BUF_SIZE);
 
     loop {
         if offset + ENTRY_OVERHEAD as u64 > SEGMENT_SIZE as u64 {
@@ -292,9 +301,6 @@ fn scan_segment(path: &Path) -> Result<(Vec<RecoveredEntry>, u64), Error> {
             break;
         };
 
-        // pread(2): "it is not an error for a successful call to transfer
-        // fewer bytes than requested." O_DIRECT on Linux transfers complete
-        // sectors, but other platforms lack this guarantee.
         if bytes_read < ENTRY_HEADER_SIZE {
             break;
         }
@@ -314,14 +320,15 @@ fn scan_segment(path: &Path) -> Result<(Vec<RecoveredEntry>, u64), Error> {
         let total_entry_size = ENTRY_HEADER_SIZE + payload_len;
         let aligned_entry_size = total_entry_size.next_multiple_of(SECTOR_SIZE);
 
-        if offset + aligned_entry_size as u64 > SEGMENT_SIZE as u64 {
+        if aligned_entry_size > entry_buf.len()
+            || offset + aligned_entry_size as u64 > SEGMENT_SIZE as u64
+        {
             break;
         }
 
-        // pread(2) reads into buf before returning. Uninitialized memory is
-        // sound because the caller only accesses bytes within bytes_read.
-        let mut entry_buf = AlignedBuffer::new_uninit(aligned_entry_size);
-        let Ok(bytes_read) = pread(&file, entry_buf.as_mut_slice(), offset) else {
+        let Ok(bytes_read) =
+            pread(&file, &mut entry_buf.as_mut_slice()[..aligned_entry_size], offset)
+        else {
             break;
         };
 
@@ -366,6 +373,7 @@ struct SegmentWriter {
     file: File,
     offset: u64,
     sequence: u64,
+    write_buf: AlignedBuffer,
 }
 
 impl SegmentWriter {
@@ -380,13 +388,23 @@ impl SegmentWriter {
         }
         sync_dir_path(dir)?;
 
-        Ok(Self { file, offset: 0, sequence })
+        Ok(Self {
+            file,
+            offset: 0,
+            sequence,
+            write_buf: AlignedBuffer::new_zeroed(MAX_WRITE_BUF_SIZE),
+        })
     }
 
     fn open_existing(path: &Path, sequence: u64, offset: u64) -> Result<Self, Error> {
         let file = open_segment_file(path, false)?;
 
-        Ok(Self { file, offset, sequence })
+        Ok(Self {
+            file,
+            offset,
+            sequence,
+            write_buf: AlignedBuffer::new_zeroed(MAX_WRITE_BUF_SIZE),
+        })
     }
 
     const fn remaining_space(&self) -> usize {
@@ -408,11 +426,8 @@ impl SegmentWriter {
             });
         }
 
-        // The buffer starts uninitialized. All content bytes are written below, and
-        // padding bytes are explicitly zeroed after. The header, LSN, timestamp, data,
-        // and footer regions do not need pre-zeroing since they are overwritten.
-        let mut buffer = AlignedBuffer::new_uninit(aligned_size);
-        let buf = buffer.as_mut_slice();
+        debug_assert!(aligned_size <= self.write_buf.len());
+        let buf = &mut self.write_buf.as_mut_slice()[..aligned_size];
 
         let mut pos = 0;
         buf[pos..pos + ENTRY_HEADER_SIZE].copy_from_slice(&header.as_bytes());
@@ -428,17 +443,16 @@ impl SegmentWriter {
         pos += data.len();
 
         buf[pos..pos + ENTRY_FOOTER_SIZE].copy_from_slice(&footer.as_bytes());
-        pos += ENTRY_FOOTER_SIZE;
 
-        // Sector alignment leaves trailing bytes unwritten. Zeroing them stops stale
-        // memory contents from reaching disk and keeps WAL content deterministic.
-        buf[pos..].fill(0);
-
-        let bytes_written = pwrite(&self.file, &buf[..aligned_size], self.offset)?;
+        let bytes_written = pwrite(&self.file, buf, self.offset)?;
 
         if bytes_written < aligned_size {
             return Err(Error::Io(io::Error::new(io::ErrorKind::WriteZero, "incomplete write")));
         }
+
+        // Restores written content region to zero so padding stays zero-filled
+        // across variable-size entries without re-zeroing the entire buffer.
+        buf[..pos + ENTRY_FOOTER_SIZE].fill(0);
 
         self.offset += aligned_size as u64;
         Ok(())
@@ -453,7 +467,7 @@ pub struct Wal {
     dir: PathBuf,
     writer: Mutex<SegmentWriter>,
     next_lsn: AtomicU64,
-    flush_mode: Mutex<FlushMode>,
+    flush_mode: AtomicU8,
     pending_syncs: AtomicU64,
     last_durable_lsn: AtomicU64,
 }
@@ -509,7 +523,7 @@ impl Wal {
             dir: dir.to_path_buf(),
             writer: Mutex::new(writer),
             next_lsn: AtomicU64::new(next_lsn),
-            flush_mode: Mutex::new(FlushMode::Cautious),
+            flush_mode: AtomicU8::new(FlushMode::Cautious as u8),
             pending_syncs: AtomicU64::new(0),
             last_durable_lsn: AtomicU64::new(last_durable),
         })
@@ -544,13 +558,17 @@ impl Wal {
 
     #[cfg(target_os = "linux")]
     fn sync_for_mode(&self, writer: &SegmentWriter) {
-        let mode = *self.flush_mode.lock().unwrap_or_else(sync::PoisonError::into_inner);
+        // Acquire pairs with the Release in set_flush_mode, so a mode
+        // change on another thread becomes visible before the next write.
+        let mode = FlushMode::try_from(self.flush_mode.load(Ordering::Acquire)).unwrap();
         match mode {
             FlushMode::Emergency | FlushMode::Cautious => writer.sync(),
             FlushMode::Normal => {
-                if self.pending_syncs.fetch_add(1, Ordering::SeqCst) + 1 >= 50 {
+                // Relaxed is sufficient because pending_syncs is only accessed
+                // while the writer Mutex is held, which provides ordering.
+                if self.pending_syncs.fetch_add(1, Ordering::Relaxed) + 1 >= 50 {
                     writer.sync();
-                    self.pending_syncs.store(0, Ordering::SeqCst);
+                    self.pending_syncs.store(0, Ordering::Relaxed);
                 }
             }
         }
@@ -559,7 +577,7 @@ impl Wal {
     #[cfg(not(target_os = "linux"))]
     fn sync_for_mode(&self, writer: &SegmentWriter) {
         writer.sync();
-        self.pending_syncs.store(0, Ordering::SeqCst);
+        self.pending_syncs.store(0, Ordering::Relaxed);
     }
 
     pub fn sync(&self) {
@@ -574,17 +592,15 @@ impl Wal {
     }
 
     pub fn stats(&self) -> WalStats {
-        let mode = *self.flush_mode.lock().unwrap_or_else(sync::PoisonError::into_inner);
-
         WalStats {
             next_lsn: self.next_lsn.load(Ordering::SeqCst),
             last_durable_lsn: self.last_durable_lsn.load(Ordering::SeqCst),
-            flush_mode: mode,
+            flush_mode: FlushMode::try_from(self.flush_mode.load(Ordering::Acquire)).unwrap(),
         }
     }
 
     pub fn set_flush_mode(&self, mode: FlushMode) {
-        *self.flush_mode.lock().unwrap_or_else(sync::PoisonError::into_inner) = mode;
+        self.flush_mode.store(mode as u8, Ordering::Release);
         if mode == FlushMode::Emergency {
             self.sync();
         }

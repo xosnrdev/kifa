@@ -11,9 +11,13 @@ use std::slice;
 use crate::helpers::SECTOR_SIZE;
 
 pub struct AlignedBuffer {
-    pub ptr: NonNull<u8>,
-    pub size: usize,
+    ptr: NonNull<u8>,
+    size: usize,
 }
+
+// SAFETY: AlignedBuffer owns its allocation exclusively. No aliased pointers exist,
+// so transferring ownership across threads is safe.
+unsafe impl Send for AlignedBuffer {}
 
 impl AlignedBuffer {
     /// Creates a new uninitialized aligned buffer.
@@ -29,6 +33,19 @@ impl AlignedBuffer {
         // responsibility for initializing bytes before any read occurs.
         let ptr = unsafe { alloc::alloc(layout) };
         Self { ptr: NonNull::new(ptr).expect("allocation failed"), size }
+    }
+
+    pub fn new_zeroed(size: usize) -> Self {
+        let size = size.next_multiple_of(SECTOR_SIZE);
+        let layout = Layout::from_size_align(size, SECTOR_SIZE).unwrap();
+        // SAFETY: Same as `new_uninit`. alloc_zeroed returns zero-filled memory,
+        // so all bytes are initialized.
+        let ptr = unsafe { alloc::alloc_zeroed(layout) };
+        Self { ptr: NonNull::new(ptr).expect("allocation failed"), size }
+    }
+
+    pub const fn len(&self) -> usize {
+        self.size
     }
 
     pub const fn as_slice(&self) -> &[u8] {

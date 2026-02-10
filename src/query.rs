@@ -15,7 +15,7 @@ use std::fmt;
 use std::fs::{File, remove_file};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 use lib_kifa::common::{atomic_rename, temp_path};
 use lib_kifa::engine::{Config, Stats, StorageEngine};
@@ -314,42 +314,167 @@ fn write_entry<W: Write>(writer: &mut W, entry: &Entry, format: OutputFormat) ->
     }
 }
 
-pub fn format_timestamp_ms(ms: u64) -> String {
-    let system_time = UNIX_EPOCH + Duration::from_millis(ms);
-    humantime::format_rfc3339_seconds(system_time)
-        .to_string()
-        .replace('T', " ")
-        .replace('Z', " UTC")
+// Howard Hinnant's civil_from_days algorithm for zero-alloc date conversion.
+// See https://howardhinnant.github.io/date_algorithms.html#civil_from_days
+#[allow(clippy::cast_sign_loss)]
+fn timestamp_buf(ms: u64) -> [u8; 23] {
+    const MILLIS_PER_SEC: u64 = 1000;
+    const SECS_PER_MIN: u32 = 60;
+    const SECS_PER_HOUR: u32 = 3600;
+    const SECS_PER_DAY: u64 = 86400;
+    const DAYS_PER_ERA: i64 = 146_097;
+
+    let total_secs = ms / MILLIS_PER_SEC;
+    let secs_in_day = (total_secs % SECS_PER_DAY) as u32;
+    let days = (total_secs / SECS_PER_DAY).cast_signed();
+
+    let z = days + 719_468;
+    let era = (if z >= 0 { z } else { z - (DAYS_PER_ERA - 1) }) / DAYS_PER_ERA;
+    let doe = (z - era * DAYS_PER_ERA) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = i64::from(yoe) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+
+    let hour = secs_in_day / SECS_PER_HOUR;
+    let minute = (secs_in_day % SECS_PER_HOUR) / SECS_PER_MIN;
+    let second = secs_in_day % SECS_PER_MIN;
+
+    let mut buf = *b"0000-00-00 00:00:00 UTC";
+    write_dec4(&mut buf, 0, y as u32);
+    write_dec2(&mut buf, 5, m);
+    write_dec2(&mut buf, 8, d);
+    write_dec2(&mut buf, 11, hour);
+    write_dec2(&mut buf, 14, minute);
+    write_dec2(&mut buf, 17, second);
+    buf
+}
+
+fn write_dec2(buf: &mut [u8], offset: usize, val: u32) {
+    buf[offset] = b'0' + (val / 10) as u8;
+    buf[offset + 1] = b'0' + (val % 10) as u8;
+}
+
+fn write_dec4(buf: &mut [u8], offset: usize, val: u32) {
+    buf[offset] = b'0' + (val / 1000) as u8;
+    buf[offset + 1] = b'0' + ((val / 100) % 10) as u8;
+    buf[offset + 2] = b'0' + ((val / 10) % 10) as u8;
+    buf[offset + 3] = b'0' + (val % 10) as u8;
+}
+
+// Emits two digits per division via a precomputed pair table, halving
+// the number of modulo operations compared to one-digit-at-a-time.
+fn write_u64_decimal<W: Write>(writer: &mut W, value: u64) -> io::Result<()> {
+    const PAIRS: &[u8; 200] = b"\
+        00010203040506070809\
+        10111213141516171819\
+        20212223242526272829\
+        30313233343536373839\
+        40414243444546474849\
+        50515253545556575859\
+        60616263646566676869\
+        70717273747576777879\
+        80818283848586878889\
+        90919293949596979899";
+    let mut buf = [0; 20];
+    let mut pos = buf.len();
+    let mut n = value;
+    while n >= 100 {
+        let rem = (n % 100) as usize * 2;
+        n /= 100;
+        pos -= 2;
+        buf[pos] = PAIRS[rem];
+        buf[pos + 1] = PAIRS[rem + 1];
+    }
+    if n >= 10 {
+        let rem = n as usize * 2;
+        pos -= 2;
+        buf[pos] = PAIRS[rem];
+        buf[pos + 1] = PAIRS[rem + 1];
+    } else {
+        pos -= 1;
+        buf[pos] = b'0' + n as u8;
+    }
+    writer.write_all(&buf[pos..])
+}
+
+pub struct TimestampDisplay([u8; 23]);
+
+impl fmt::Display for TimestampDisplay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // SAFETY: `timestamp_buf` writes only ASCII digits, hyphens, colons, spaces, and "UTC".
+        let s = unsafe { str::from_utf8_unchecked(&self.0) };
+        f.write_str(s)
+    }
+}
+
+pub fn format_timestamp_ms(ms: u64) -> TimestampDisplay {
+    TimestampDisplay(timestamp_buf(ms))
 }
 
 fn write_entry_text<W: Write>(writer: &mut W, entry: &Entry) -> io::Result<()> {
-    let data_str = String::from_utf8_lossy(&entry.data);
-    let timestamp = format_timestamp_ms(entry.timestamp_ms);
-    writeln!(writer, "[{}] {} {}", entry.lsn, timestamp, data_str)
+    let ts = timestamp_buf(entry.timestamp_ms);
+    writer.write_all(b"[")?;
+    write_u64_decimal(writer, entry.lsn)?;
+    writer.write_all(b"] ")?;
+    writer.write_all(&ts)?;
+    writer.write_all(b" ")?;
+    write_lossy(writer, &entry.data)?;
+    writer.write_all(b"\n")
+}
+
+fn write_lossy<W: Write>(writer: &mut W, data: &[u8]) -> io::Result<()> {
+    // Validates once up front so valid UTF-8 (the common case) bypasses
+    // the chunk iterator, which allocates a Utf8Chunks state machine.
+    if str::from_utf8(data).is_ok() {
+        return writer.write_all(data);
+    }
+    for chunk in data.utf8_chunks() {
+        writer.write_all(chunk.valid().as_bytes())?;
+        if !chunk.invalid().is_empty() {
+            writer.write_all("\u{FFFD}".as_bytes())?;
+        }
+    }
+    Ok(())
 }
 
 fn write_entry_json<W: Write>(writer: &mut W, entry: &Entry) -> io::Result<()> {
-    let timestamp = format_timestamp_ms(entry.timestamp_ms);
-    write!(
-        writer,
-        r#"{{"lsn":{},"timestamp":"{}","timestamp_ms":{},"data":""#,
-        entry.lsn, timestamp, entry.timestamp_ms
-    )?;
+    let ts = timestamp_buf(entry.timestamp_ms);
+    writer.write_all(br#"{"lsn":"#)?;
+    write_u64_decimal(writer, entry.lsn)?;
+    writer.write_all(br#","timestamp":""#)?;
+    writer.write_all(&ts)?;
+    writer.write_all(br#"","timestamp_ms":"#)?;
+    write_u64_decimal(writer, entry.timestamp_ms)?;
+    writer.write_all(br#","data":""#)?;
     write_json_escaped_bytes(writer, &entry.data)?;
-    writeln!(writer, r#""}}"#)
+    writer.write_all(b"\"}\n")
 }
 
 fn write_entry_csv<W: Write>(writer: &mut W, entry: &Entry) -> io::Result<()> {
-    let timestamp = format_timestamp_ms(entry.timestamp_ms);
-    write!(writer, r#"{},"{}",{},""#, entry.lsn, timestamp, entry.timestamp_ms)?;
+    let ts = timestamp_buf(entry.timestamp_ms);
+    write_u64_decimal(writer, entry.lsn)?;
+    writer.write_all(br#",""#)?;
+    writer.write_all(&ts)?;
+    writer.write_all(br#"","#)?;
+    write_u64_decimal(writer, entry.timestamp_ms)?;
+    writer.write_all(br#",""#)?;
     write_csv_escaped_bytes(writer, &entry.data)?;
-    writeln!(writer, r#"""#)
+    writer.write_all(b"\"\n")
 }
 
 fn write_entry_hex<W: Write>(writer: &mut W, entry: &Entry) -> io::Result<()> {
     const HEX: &[u8; 16] = b"0123456789abcdef";
 
-    write!(writer, "{:016x} {:016x} ", entry.lsn, entry.timestamp_ms)?;
+    let mut header = [0; 34];
+    write_hex16(&mut header, 0, entry.lsn);
+    header[16] = b' ';
+    write_hex16(&mut header, 17, entry.timestamp_ms);
+    header[33] = b' ';
+    writer.write_all(&header)?;
 
     // A stack buffer amortizes write syscalls. Each input byte yields two hex
     // characters, so 512 input bytes fill the 1024-byte buffer.
@@ -371,45 +496,67 @@ fn write_entry_hex<W: Write>(writer: &mut W, entry: &Entry) -> io::Result<()> {
         writer.write_all(&buf[..pos])?;
     }
 
-    writeln!(writer)
+    writer.write_all(b"\n")
+}
+
+fn write_hex16(buf: &mut [u8], offset: usize, val: u64) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let bytes = val.to_be_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        buf[offset + i * 2] = HEX[(b >> 4) as usize];
+        buf[offset + i * 2 + 1] = HEX[(b & 0x0f) as usize];
+    }
 }
 
 fn write_json_escaped_bytes<W: Write>(writer: &mut W, data: &[u8]) -> io::Result<()> {
-    // The loop accumulates runs of printable ASCII and flushes them in one
-    // write call. Only bytes requiring escape sequences trigger individual writes.
-    let mut start = 0;
-
-    for (i, &byte) in data.iter().enumerate() {
-        let escape = match byte {
-            b'"' => Some(b"\\\""),
-            b'\\' => Some(b"\\\\"),
-            b'\n' => Some(b"\\n"),
-            b'\r' => Some(b"\\r"),
-            b'\t' => Some(b"\\t"),
-            0x20..=0x21 | 0x23..=0x5B | 0x5D..=0x7E => None,
-            _ => {
-                // The byte falls outside printable ASCII, so the pending slice
-                // is flushed and the byte is emitted as a Unicode escape.
-                if start < i {
-                    writer.write_all(&data[start..i])?;
-                }
-                write!(writer, "\\u{byte:04x}")?;
-                start = i + 1;
-                continue;
-            }
-        };
-
-        if let Some(esc) = escape {
-            if start < i {
-                writer.write_all(&data[start..i])?;
-            }
-            writer.write_all(esc)?;
-            start = i + 1;
+    static SAFE: [bool; 256] = {
+        let mut t = [false; 256];
+        let mut b = 0x20u8;
+        while b <= 0x7E {
+            t[b as usize] = true;
+            b += 1;
         }
+        t[b'"' as usize] = false;
+        t[b'\\' as usize] = false;
+        t
+    };
+
+    let mut start = 0;
+    let len = data.len();
+    let mut i = 0;
+    while i < len {
+        if SAFE[data[i] as usize] {
+            i += 1;
+            continue;
+        }
+        if start < i {
+            writer.write_all(&data[start..i])?;
+        }
+        let byte = data[i];
+        match byte {
+            b'"' => writer.write_all(br#"\""#)?,
+            b'\\' => writer.write_all(br"\\")?,
+            b'\n' => writer.write_all(br"\n")?,
+            b'\r' => writer.write_all(br"\r")?,
+            b'\t' => writer.write_all(br"\t")?,
+            _ => {
+                let hi = byte >> 4;
+                let lo = byte & 0x0f;
+                writer.write_all(&[
+                    b'\\',
+                    b'u',
+                    b'0',
+                    b'0',
+                    b"0123456789abcdef"[hi as usize],
+                    b"0123456789abcdef"[lo as usize],
+                ])?;
+            }
+        }
+        i += 1;
+        start = i;
     }
 
-    // Any trailing safe bytes that were not yet written are flushed here.
-    if start < data.len() {
+    if start < len {
         writer.write_all(&data[start..])?;
     }
 

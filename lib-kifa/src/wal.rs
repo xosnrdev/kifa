@@ -373,7 +373,6 @@ struct SegmentWriter {
     file: File,
     offset: u64,
     sequence: u64,
-    write_buf: AlignedBuffer,
 }
 
 impl SegmentWriter {
@@ -388,30 +387,26 @@ impl SegmentWriter {
         }
         sync_dir_path(dir)?;
 
-        Ok(Self {
-            file,
-            offset: 0,
-            sequence,
-            write_buf: AlignedBuffer::new_zeroed(MAX_WRITE_BUF_SIZE),
-        })
+        Ok(Self { file, offset: 0, sequence })
     }
 
     fn open_existing(path: &Path, sequence: u64, offset: u64) -> Result<Self, Error> {
         let file = open_segment_file(path, false)?;
 
-        Ok(Self {
-            file,
-            offset,
-            sequence,
-            write_buf: AlignedBuffer::new_zeroed(MAX_WRITE_BUF_SIZE),
-        })
+        Ok(Self { file, offset, sequence })
     }
 
     const fn remaining_space(&self) -> usize {
         SEGMENT_SIZE.saturating_sub(self.offset as usize)
     }
 
-    fn write_entry(&mut self, lsn: u64, timestamp_ms: u64, data: &[u8]) -> Result<(), Error> {
+    fn write_entry(
+        &mut self,
+        lsn: u64,
+        timestamp_ms: u64,
+        data: &[u8],
+        write_buf: &mut AlignedBuffer,
+    ) -> Result<(), Error> {
         let header = EntryHeader::new(data.len());
         let footer = EntryFooter::new(lsn, timestamp_ms, data);
 
@@ -426,8 +421,8 @@ impl SegmentWriter {
             });
         }
 
-        debug_assert!(aligned_size <= self.write_buf.len());
-        let buf = &mut self.write_buf.as_mut_slice()[..aligned_size];
+        debug_assert!(aligned_size <= write_buf.len());
+        let buf = &mut write_buf.as_mut_slice()[..aligned_size];
 
         let mut pos = 0;
         buf[pos..pos + ENTRY_HEADER_SIZE].copy_from_slice(&header.as_bytes());
@@ -463,9 +458,22 @@ impl SegmentWriter {
     }
 }
 
+struct WalWriter {
+    segment: SegmentWriter,
+    // Allocated once at Wal::open so segment rotations reuse the same
+    // buffer instead of allocating and zeroing a fresh 1 MiB region.
+    write_buf: AlignedBuffer,
+}
+
+impl WalWriter {
+    fn write_entry(&mut self, lsn: u64, timestamp_ms: u64, data: &[u8]) -> Result<(), Error> {
+        self.segment.write_entry(lsn, timestamp_ms, data, &mut self.write_buf)
+    }
+}
+
 pub struct Wal {
     dir: PathBuf,
-    writer: Mutex<SegmentWriter>,
+    writer: Mutex<WalWriter>,
     next_lsn: AtomicU64,
     flush_mode: AtomicU8,
     pending_syncs: AtomicU64,
@@ -521,7 +529,10 @@ impl Wal {
 
         Ok(Self {
             dir: dir.to_path_buf(),
-            writer: Mutex::new(writer),
+            writer: Mutex::new(WalWriter {
+                segment: writer,
+                write_buf: AlignedBuffer::new_zeroed(MAX_WRITE_BUF_SIZE),
+            }),
             next_lsn: AtomicU64::new(next_lsn),
             flush_mode: AtomicU8::new(FlushMode::Cautious as u8),
             pending_syncs: AtomicU64::new(0),
@@ -542,16 +553,16 @@ impl Wal {
         let total_size = ENTRY_OVERHEAD + data.len();
         let aligned_size = total_size.next_multiple_of(SECTOR_SIZE);
 
-        if aligned_size > writer.remaining_space() {
-            let new_seq = writer.sequence + 1;
-            log::debug!("WAL segment rotated: sequence {} -> {}", writer.sequence, new_seq);
-            writer.sync();
-            *writer = SegmentWriter::new(&self.dir, new_seq)?;
+        if aligned_size > writer.segment.remaining_space() {
+            let new_seq = writer.segment.sequence + 1;
+            log::debug!("WAL segment rotated: sequence {} -> {}", writer.segment.sequence, new_seq);
+            writer.segment.sync();
+            writer.segment = SegmentWriter::new(&self.dir, new_seq)?;
         }
 
         writer.write_entry(lsn, timestamp_ms, data)?;
 
-        self.sync_for_mode(&writer);
+        self.sync_for_mode(&writer.segment);
 
         Ok((lsn, timestamp_ms))
     }
@@ -582,7 +593,7 @@ impl Wal {
 
     pub fn sync(&self) {
         let writer = self.writer.lock().unwrap_or_else(sync::PoisonError::into_inner);
-        writer.sync();
+        writer.segment.sync();
         self.pending_syncs.store(0, Ordering::SeqCst);
 
         let current = self.next_lsn.load(Ordering::SeqCst);
@@ -611,7 +622,7 @@ impl Wal {
         let mut deleted_count = 0;
 
         let writer = self.writer.lock().unwrap_or_else(sync::PoisonError::into_inner);
-        let current_sequence = writer.sequence;
+        let current_sequence = writer.segment.sequence;
         drop(writer);
 
         for path in segments {

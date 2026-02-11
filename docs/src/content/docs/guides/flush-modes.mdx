@@ -1,0 +1,77 @@
+---
+title: Choosing a Flush Mode
+description: Trade off durability and throughput with Normal, Cautious, and Emergency flush modes.
+---
+
+import {
+  Tabs,
+  TabItem,
+  LinkCard,
+  CardGrid,
+} from "@astrojs/starlight/components";
+
+Flush modes control when data is fsync'd to disk. The right choice depends on power stability and data criticality.
+
+## Modes
+
+| Mode        | Behavior                           | Data at Risk              | Use When                           |
+| ----------- | ---------------------------------- | ------------------------- | ---------------------------------- |
+| `normal`    | Batch sync every ~50 writes        | Up to 49 entries          | Stable power, maximum throughput   |
+| `cautious`  | Sync after each write              | None (after call returns) | Elevated risk, possible brown-outs |
+| `emergency` | Sync immediately, pause compaction | None                      | Power failure imminent             |
+
+## Decision Guide
+
+**Use `normal`** when the power supply is stable and throughput matters more than per-entry durability. Normal mode amortizes fsync cost over ~50 writes, yielding roughly 7x the throughput of Cautious mode. Up to 49 entries can be lost if power fails between syncs.
+
+**Use `cautious`** when handling financial transactions or any data where loss is unacceptable. Every `append()` call fsyncs before returning. If `append()` returns without error, the entry is on disk. This is the recommended mode for POS terminals.
+
+**Use `emergency`** when a UPS signals low battery or power loss is imminent. Behaves like Cautious but also pauses background compaction to minimize disk activity. Switch to this mode at runtime via `SIGUSR1`.
+
+## Setting the Flush Mode
+
+<Tabs>
+  <TabItem label="CLI flag">
+    ```bash title="Terminal"
+    kifa daemon --stdin --flush-mode cautious -d ./data
+    ```
+  </TabItem>
+  <TabItem label="Environment">
+    ```bash title="Terminal"
+    KIFA_FLUSH_MODE=emergency kifa daemon --stdin -d ./data
+    ```
+  </TabItem>
+  <TabItem label="Runtime (Unix)">
+    Escalate from Cautious to Emergency:
+
+    ```bash title="Terminal"
+    kill -USR1 $(pgrep kifa)
+    ```
+
+    Runtime escalation is one-directional: Cautious to Emergency. There is no runtime de-escalation.
+
+  </TabItem>
+</Tabs>
+
+## Performance
+
+| Mode        | Throughput Bottleneck           | Notes                                        |
+| ----------- | ------------------------------- | -------------------------------------------- |
+| `normal`    | pwrite syscall + memtable flush | fsync amortized over 50 writes; ~7x cautious |
+| `cautious`  | Storage fsync latency           | One fdatasync per append; hardware-dependent |
+| `emergency` | Same as cautious                | Compaction pause has no measurable impact    |
+
+Throughput scales with storage hardware. Run `cargo bp` on the target device for specific numbers.
+
+<CardGrid>
+  <LinkCard
+    title="Configuration"
+    description="All config layers: TOML, env vars, CLI flags."
+    href="/kifa/guides/configuration/"
+  />
+  <LinkCard
+    title="Architecture"
+    description="How the WAL and fsync guarantee durability."
+    href="/kifa/internals/architecture/"
+  />
+</CardGrid>

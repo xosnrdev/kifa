@@ -1,0 +1,37 @@
+---
+title: Kifa
+description: Crash-proof local logging for POS and mobile money systems.
+template: splash
+hero:
+  title: Crash-proof local logging
+  tagline: A storage engine for transaction logs on edge devices. Every confirmed write survives power failure.
+  actions:
+    - text: Get Started
+      link: /kifa/quick-start/
+      icon: right-arrow
+      variant: primary
+    - text: Architecture
+      link: /kifa/internals/architecture/
+      variant: minimal
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+<CardGrid>
+  <Card title="Crash-Proof">
+    Configurable fsync modes with dual-CRC validation. Direct I/O on Linux
+    bypasses the page cache for true durability.
+  </Card>
+  <Card title="Single Binary">
+    No SQLite. No external database. No runtime dependencies. One static binary
+    that does one thing well.
+  </Card>
+  <Card title="Configurable Durability">
+    Three flush modes: Normal for throughput, Cautious for zero data loss,
+    Emergency for imminent power failure.
+  </Card>
+  <Card title="Built for the Edge">
+    Designed for POS terminals and mobile money agents operating on unreliable
+    power with limited resources.
+  </Card>
+</CardGrid>

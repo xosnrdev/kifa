@@ -10,6 +10,14 @@
   <a href="https://xosnrdev.github.io/kifa/"><img src="https://img.shields.io/badge/docs-xosnrdev.github.io%2Fkifa-c8a46e" alt="Docs"></a>
 </p>
 
+## Table of Contents
+
+- [What is Kifa?](#what-is-kifa)
+- [Quick Start](#quick-start)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [License](#license)
+
 ## What is Kifa?
 
 Kifa is a storage engine for transaction logs on edge devices. It uses a write-ahead log with configurable fsync to guarantee that **every confirmed write survives power failure**.

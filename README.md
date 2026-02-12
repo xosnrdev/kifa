@@ -50,7 +50,11 @@ See the [Quick Start guide](https://xosnrdev.github.io/kifa/quick-start/) for a 
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, CI commands, and the pull request process. Security vulnerabilities should be reported via the [security policy](SECURITY.md).
+Want to contribute? Please read:
+
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- [SECURITY.md](SECURITY.md)
 
 ## License
 

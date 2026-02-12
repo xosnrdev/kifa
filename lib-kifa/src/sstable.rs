@@ -348,11 +348,6 @@ impl SstableReader {
 
         Ok(entries)
     }
-
-    #[must_use]
-    pub const fn iter(self) -> SstableIter {
-        SstableIter { reader: self, error: None, finished: false }
-    }
 }
 
 impl IntoIterator for SstableReader {
@@ -360,7 +355,7 @@ impl IntoIterator for SstableReader {
     type IntoIter = SstableIter;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.iter()
+        SstableIter { reader: self, error: None, finished: false }
     }
 }
 

@@ -659,8 +659,6 @@ impl Drop for StorageEngine {
 /// Snapshots provide isolation from concurrent writes. Create a snapshot
 /// via [`StorageEngine::snapshot`], then read from it without blocking
 /// ongoing writes.
-///
-/// Implements [`IntoIterator`] for convenient iteration over all entries.
 pub struct ReadSnapshot {
     memtable_entries: Arc<Vec<Entry>>,
     sstable_entries: Vec<SstableEntry>,
@@ -691,7 +689,7 @@ impl ReadSnapshot {
             }
 
             let reader = SstableReader::open(&sstable.path)?;
-            let mut iter = reader.iter();
+            let mut iter = reader.into_iter();
             for entry in iter.by_ref() {
                 if entry.lsn == lsn {
                     return Ok(Some(entry));
@@ -780,7 +778,7 @@ impl MergeIter {
 
         for sstable in sstable_entries {
             let reader = SstableReader::open(&sstable.path)?;
-            let mut iter = reader.iter();
+            let mut iter = reader.into_iter();
 
             if let Some(entry) = iter.next() {
                 let source_idx = sources.len();

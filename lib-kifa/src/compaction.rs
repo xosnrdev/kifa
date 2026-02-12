@@ -200,7 +200,7 @@ pub fn run_compaction(dir: &Path, inputs: &[SstableEntry]) -> Result<CompactionO
 
     for (idx, entry) in inputs.iter().enumerate() {
         let reader = SstableReader::open(&entry.path)?;
-        let mut iter = reader.iter();
+        let mut iter = reader.into_iter();
 
         if let Some(first) = iter.next() {
             heap.push(Reverse(HeapEntry {

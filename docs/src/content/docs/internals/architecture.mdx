@@ -1,0 +1,90 @@
+---
+title: Architecture
+description: How Kifa's storage engine works. WAL, memtable, SSTables, compaction, and crash recovery.
+---
+
+import { Steps, LinkCard, CardGrid } from "@astrojs/starlight/components";
+import DataFlowDiagram from "../../../components/DataFlowDiagram.astro";
+
+Kifa is an LSM-tree (Log-Structured Merge-tree) optimized for append-only workloads. Entries flow through four stages: write-ahead log, memtable, SSTables, and compaction.
+
+## Data Flow
+
+<DataFlowDiagram />
+
+## Components
+
+### Write-Ahead Log (WAL)
+
+The WAL is the durability layer. Every entry is written to the WAL before it reaches the memtable. WAL segments are fixed at 16 MiB by default.
+
+On Linux, the WAL uses Direct I/O (`O_DIRECT`) to bypass the kernel page cache. This means fsync writes directly to storage media rather than to a kernel buffer that may not survive power loss.
+
+Each WAL entry is validated with:
+
+- **Header CRC**: protects the length field
+- **Data CRC**: protects LSN, timestamp, and payload
+- **Magic trailer**: detects incomplete writes from a crash mid-entry
+
+### Memtable
+
+The memtable is an in-memory buffer holding recent writes, sorted by LSN. Because Kifa is append-only (entries are never updated or deleted), the memtable is a Vec with entries appended in LSN order. Entries are iterated sequentially during flush and query.
+
+When the memtable exceeds the flush threshold (default: 4 MiB), it is written to an SSTable and cleared.
+
+### SSTables
+
+SSTables (Sorted String Tables) are immutable files on disk. Each SSTable contains entries sorted by LSN. Once written, an SSTable is never modified.
+
+Reads search the memtable first, then SSTables from newest to oldest.
+
+### Compaction
+
+Background compaction merges multiple SSTables into fewer, larger files. This reclaims disk space from obsolete WAL segments and keeps read performance bounded.
+
+Compaction triggers when the number of SSTables exceeds the compaction threshold (default: 4). In Emergency flush mode, compaction is paused to minimize disk activity.
+
+### Manifest
+
+The manifest tracks database state: which SSTables exist, the checkpoint LSN (the point up to which entries have been flushed to SSTables), and metadata checksums. On startup, the manifest determines where WAL replay begins.
+
+## Entry Format
+
+Each log entry contains three fields:
+
+| Field     | Size     | Description                                    |
+| --------- | -------- | ---------------------------------------------- |
+| LSN       | 8 bytes  | Log sequence number (monotonically increasing) |
+| Timestamp | 8 bytes  | Unix timestamp in milliseconds                 |
+| Data      | Variable | Raw payload (max 1 MiB)                        |
+
+## Crash Recovery
+
+On startup, Kifa:
+
+<Steps>
+
+1. **Read manifest.** Determine the checkpoint LSN.
+
+2. **Replay WAL.** Replay all entries after the checkpoint LSN into the memtable.
+
+3. **Validate CRCs.** Entries with invalid CRCs or incomplete trailers are discarded. They represent writes that did not complete before the crash.
+
+4. **Report statistics.** Entries replayed, time range, and any gaps in the LSN sequence.
+
+</Steps>
+
+In Cautious mode, there are no gaps. Every entry that `append()` confirmed is on disk. In Normal mode, up to 49 entries between syncs may be missing after a crash.
+
+<CardGrid>
+  <LinkCard
+    title="Choosing a Flush Mode"
+    description="Durability vs throughput trade-offs."
+    href="/kifa/guides/flush-modes/"
+  />
+  <LinkCard
+    title="Contributing"
+    description="Development setup and code quality standards."
+    href="/kifa/contributing/"
+  />
+</CardGrid>

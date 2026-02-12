@@ -1,0 +1,90 @@
+---
+title: Quick Start
+description: Get Kifa running and verify crash-proof logging in under five minutes.
+---
+
+import { Steps, LinkCard, CardGrid } from "@astrojs/starlight/components";
+
+This walkthrough takes about five minutes. At the end, Kifa is ingesting data, responding to queries, and reporting storage statistics.
+
+<Steps>
+
+1. **Build from source**
+
+   ```bash title="Terminal"
+   git clone https://github.com/xosnrdev/kifa.git
+   cd kifa
+   cargo cb
+   ```
+
+   See [Installation](/kifa/install/) for pre-built binaries and system packages.
+
+2. **Ingest a transaction**
+
+   Pipe a JSON transaction into the daemon via stdin:
+
+   ```bash title="Terminal"
+   echo '{"txn":"TXN-001","amount":5000,"status":"completed"}' | \
+     ./target/release/kifa daemon --stdin -d ./data
+   ```
+
+   Kifa writes the entry to the write-ahead log and fsyncs it to disk. The process exits after stdin closes.
+
+3. **Query the stored entry**
+
+   ```bash title="Terminal"
+   ./target/release/kifa query -d ./data
+   ```
+
+   ```text title="Output"
+   [1] 2026-01-31 18:30:00 UTC {"txn":"TXN-001","amount":5000,"status":"completed"}
+   ```
+
+   The `[1]` is the LSN (log sequence number). Each entry gets a monotonically increasing LSN.
+
+4. **Check statistics**
+
+   ```bash title="Terminal"
+   ./target/release/kifa stats -d ./data
+   ```
+
+   ```text title="Output"
+   Storage:
+     Total entries: 1
+     SSTables: 0 (checkpoint LSN: 0)
+     Memtable: 1 entries
+
+   WAL:
+     Flush mode: Cautious
+
+   Health:
+     Time range: 2026-01-31 18:30:00 UTC - 2026-01-31 18:30:00 UTC
+     Gaps: none
+   ```
+
+</Steps>
+
+## Next Steps
+
+<CardGrid>
+  <LinkCard
+    title="Running the Daemon"
+    description="Ingest from files, TCP, or UDP."
+    href="/kifa/guides/daemon/"
+  />
+  <LinkCard
+    title="Choosing a Flush Mode"
+    description="Trade off durability and throughput."
+    href="/kifa/guides/flush-modes/"
+  />
+  <LinkCard
+    title="Configuration"
+    description="TOML, environment variables, and CLI flags."
+    href="/kifa/guides/configuration/"
+  />
+  <LinkCard
+    title="Deployment"
+    description="Systemd, signals, and production hardening."
+    href="/kifa/guides/deployment/"
+  />
+</CardGrid>

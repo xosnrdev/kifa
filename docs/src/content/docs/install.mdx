@@ -1,0 +1,87 @@
+---
+title: Installation
+description: Install Kifa from pre-built binaries, system packages, or source.
+---
+
+import { Tabs, TabItem, Steps } from "@astrojs/starlight/components";
+
+## Pre-built Binaries
+
+Download the latest release from [GitHub Releases](https://github.com/xosnrdev/kifa/releases/latest).
+
+| Architecture | Targets                                                   |
+| ------------ | --------------------------------------------------------- |
+| x86_64       | `x86_64-unknown-linux-gnu`, `x86_64-unknown-linux-musl`   |
+| ARM64        | `aarch64-unknown-linux-gnu`, `aarch64-unknown-linux-musl` |
+| ARM32        | `arm-unknown-linux-gnueabihf`                             |
+
+Each tarball includes the binary, a systemd service file, and license files.
+
+## System Packages
+
+<Tabs syncKey="pkg">
+  <TabItem label="Debian / Ubuntu">
+    Download `.deb` files from [GitHub Releases](https://github.com/xosnrdev/kifa/releases/latest). Available architectures: `amd64`, `arm64`, `armhf`.
+
+    ```bash title="Terminal"
+    sudo dpkg -i kifa_<version>-1_<arch>.deb
+    ```
+
+  </TabItem>
+  <TabItem label="Red Hat / Fedora">
+    Download `.rpm` files from [GitHub Releases](https://github.com/xosnrdev/kifa/releases/latest). Available architectures: `x86_64`, `aarch64`, `armv7hl`.
+
+    ```bash title="Terminal"
+    sudo rpm -i kifa-<version>-1.<arch>.rpm
+    ```
+
+  </TabItem>
+  <TabItem label="Tarball">
+    ```bash title="Terminal"
+    tar xzf kifa-<version>-<target>.tar.gz
+    sudo cp kifa-<version>-<target>/kifa /usr/bin/
+    ```
+  </TabItem>
+</Tabs>
+
+## Building from Source
+
+Requires Rust 1.93.0+ (nightly toolchain). Supported platforms: Linux (recommended), macOS, Windows.
+
+<Tabs syncKey="build">
+  <TabItem label="Optimized">
+    Uses `build-std` and `panic-immediate-abort` for a smaller binary:
+
+    ```bash title="Terminal"
+    git clone https://github.com/xosnrdev/kifa.git
+    cd kifa
+    cargo cb
+    ```
+
+    Binary location: `./target/release/kifa`
+
+  </TabItem>
+  <TabItem label="Quick Install">
+    Installs without size optimizations:
+
+    ```bash title="Terminal"
+    cargo install --git https://github.com/xosnrdev/kifa.git
+    ```
+
+  </TabItem>
+</Tabs>
+
+## Examples
+
+Kifa includes a transaction generator and crash-test harness:
+
+```bash title="Terminal"
+cargo build --release --examples
+```
+
+This builds:
+
+- `./target/release/examples/gen-transactions`: Synthetic POS transaction generator
+- `./target/release/examples/crash-test`: Crash recovery verification harness
+
+For true durability validation, run crash tests with LazyFS in Docker. See [Crash Testing](/kifa/contributing/#crash-testing) for details.

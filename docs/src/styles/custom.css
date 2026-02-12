@@ -1,0 +1,283 @@
+:root {
+	--sl-font:
+		"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+	--sl-font-mono:
+		"JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace, "SF Mono",
+		Menlo, Consolas, monospace;
+}
+
+/* --------------------------------------------------------
+   Color Tokens
+   Monochrome with warm amber accent.
+   Default: system preference (Starlight built-in).
+   -------------------------------------------------------- */
+
+:root[data-theme="dark"] {
+	--sl-color-accent-low: #1a1612;
+	--sl-color-accent: #c8a46e;
+	--sl-color-accent-high: #f0e0c4;
+	--sl-color-white: #e8e4df;
+	--sl-color-gray-1: #cbc5bd;
+	--sl-color-gray-2: #938d85;
+	--sl-color-gray-3: #5e5850;
+	--sl-color-gray-4: #302c27;
+	--sl-color-gray-5: #221f1b;
+	--sl-color-gray-6: #181614;
+	--sl-color-black: #0e0d0b;
+	--sl-color-bg-nav: var(--sl-color-black);
+	--sl-color-bg-sidebar: var(--sl-color-black);
+}
+
+:root[data-theme="light"] {
+	--sl-color-accent-low: #f5efe5;
+	--sl-color-accent: #8b6914;
+	--sl-color-accent-high: #362a0d;
+	--sl-color-white: #181614;
+	--sl-color-gray-1: #302c27;
+	--sl-color-gray-2: #5e5850;
+	--sl-color-gray-3: #938d85;
+	--sl-color-gray-4: #cbc5bd;
+	--sl-color-gray-5: #e8e4df;
+	--sl-color-gray-6: #f5f2ee;
+	--sl-color-black: #faf8f5;
+}
+
+/* --------------------------------------------------------
+   Typography
+   -------------------------------------------------------- */
+
+html {
+	font-feature-settings:
+		"liga" 1,
+		"calt" 1;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	scroll-behavior: smooth;
+}
+
+.sl-markdown-content {
+	line-height: 1.7;
+}
+
+.sl-markdown-content p {
+	margin-block: 0.75rem;
+}
+
+.sl-markdown-content h1 {
+	font-size: 1.75rem;
+	font-weight: 700;
+	letter-spacing: -0.02em;
+}
+
+.sl-markdown-content h2 {
+	font-size: 1.375rem;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	margin-top: 2.5rem;
+}
+
+.sl-markdown-content h3 {
+	font-size: 1.125rem;
+	font-weight: 600;
+}
+
+/* --------------------------------------------------------
+   Links: smooth color transitions on hover.
+   -------------------------------------------------------- */
+
+.sl-markdown-content a {
+	transition: color 160ms ease-out;
+}
+
+.sl-markdown-content a:hover {
+	color: var(--sl-color-accent-high);
+}
+
+/* Heading anchors fade in on hover */
+.sl-markdown-content :is(h1, h2, h3, h4, h5) a[aria-hidden] {
+	opacity: 0;
+	transition: opacity 160ms ease-out;
+}
+
+.sl-markdown-content :is(h1, h2, h3, h4, h5):hover a[aria-hidden] {
+	opacity: 1;
+}
+
+/* --------------------------------------------------------
+   Sidebar: subtle background on hover.
+   -------------------------------------------------------- */
+
+nav.sidebar a {
+	transition:
+		color 140ms ease-out,
+		background-color 140ms ease-out;
+	border-radius: 0.25rem;
+}
+
+nav.sidebar a:hover {
+	background-color: var(--sl-color-gray-5);
+}
+
+nav.sidebar .top-level>li+li {
+	margin-top: 0.5rem;
+}
+
+/* --------------------------------------------------------
+   Cards and LinkCards: border accent on hover.
+   -------------------------------------------------------- */
+
+.card {
+	transition:
+		border-color 180ms ease-out,
+		box-shadow 180ms ease-out;
+}
+
+.card:hover {
+	border-color: var(--sl-color-accent);
+	box-shadow: 0 0 0 1px var(--sl-color-accent-low);
+}
+
+.link-card a {
+	transition:
+		border-color 180ms ease-out,
+		box-shadow 180ms ease-out;
+}
+
+.link-card a:hover {
+	border-color: var(--sl-color-accent);
+	box-shadow: 0 0 0 1px var(--sl-color-accent-low);
+}
+
+/* --------------------------------------------------------
+   Tables: row highlight on hover.
+   -------------------------------------------------------- */
+
+.sl-markdown-content table {
+	font-size: 0.875rem;
+}
+
+.sl-markdown-content th {
+	font-weight: 600;
+	text-transform: none;
+	letter-spacing: 0;
+}
+
+.sl-markdown-content tbody tr {
+	transition: background-color 120ms ease-out;
+}
+
+.sl-markdown-content tbody tr:hover {
+	background-color: var(--sl-color-gray-6);
+}
+
+/* --------------------------------------------------------
+   Focus: accessible outline for keyboard navigation.
+   -------------------------------------------------------- */
+
+:focus-visible {
+	outline: 2px solid var(--sl-color-accent);
+	outline-offset: 2px;
+	border-radius: 2px;
+}
+
+/* --------------------------------------------------------
+   Buttons and CTAs: smooth state transitions.
+   -------------------------------------------------------- */
+
+a[role="button"],
+.action-links a,
+button:not([disabled]) {
+	transition:
+		background-color 160ms ease-out,
+		color 160ms ease-out,
+		border-color 160ms ease-out,
+		box-shadow 160ms ease-out,
+		transform 160ms ease-out;
+}
+
+a[role="button"]:active,
+.action-links a:active,
+button:not([disabled]):active {
+	transform: scale(0.98);
+}
+
+/* --------------------------------------------------------
+   Hero CTAs: splash page actions.
+   -------------------------------------------------------- */
+
+.hero .action a {
+	transition:
+		background-color 160ms ease-out,
+		color 160ms ease-out,
+		border-color 160ms ease-out,
+		transform 160ms ease-out;
+}
+
+.hero .action a:active {
+	transform: scale(0.97);
+}
+
+/* --------------------------------------------------------
+   Code blocks: terminal-native borders.
+   -------------------------------------------------------- */
+
+:root[data-theme="dark"] .expressive-code pre {
+	border-color: var(--sl-color-gray-4);
+}
+
+.expressive-code pre {
+	font-size: 0.875rem;
+	line-height: 1.625;
+}
+
+/* Copy button feedback */
+.expressive-code .copy button {
+	transition:
+		opacity 140ms ease-out,
+		background-color 140ms ease-out;
+}
+
+/* --------------------------------------------------------
+   TOC: smooth highlight as the reader scrolls.
+   -------------------------------------------------------- */
+
+starlight-toc a {
+	transition:
+		color 140ms ease-out,
+		border-color 140ms ease-out;
+}
+
+/* --------------------------------------------------------
+   Mobile menu: smooth reveal on small viewports.
+   -------------------------------------------------------- */
+
+starlight-menu-button+nav {
+	transition:
+		visibility 200ms,
+		opacity 200ms ease-out;
+}
+
+/* --------------------------------------------------------
+   Theme toggle: smooth icon transition.
+   -------------------------------------------------------- */
+
+starlight-theme-select button {
+	transition: color 160ms ease-out;
+}
+
+/* --------------------------------------------------------
+   Reduced motion.
+   Respects prefers-reduced-motion at the OS level.
+   All transitions and animations collapse to instant.
+   -------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+
+	*,
+	*::before,
+	*::after {
+		transition-duration: 0.01ms !important;
+		animation-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+}

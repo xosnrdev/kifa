@@ -1,0 +1,85 @@
+---
+title: Configuration
+description: Configure Kifa via TOML file, environment variables, or CLI flags.
+---
+
+import { LinkCard, CardGrid } from "@astrojs/starlight/components";
+
+Kifa uses a three-layer configuration system:
+
+**CLI flags > Environment variables > TOML file**
+
+A setting specified as a CLI flag overrides the same setting in an environment variable, which overrides the TOML file.
+
+## Configuration File
+
+Place `kifa.toml` in the data directory or specify a path with `-c /path/to/config.toml`.
+
+```toml title="kifa.toml"
+[storage]
+memtable_flush_threshold_mib = 4
+compaction_threshold = 4
+compaction_enabled = true
+
+[wal]
+flush_mode = "cautious"
+segment_size_mib = 16
+
+[ingester]
+channel_capacity = 1024
+
+[sources]
+stdin = false
+files = ["~/logs/transactions.log"]
+tcp = ["127.0.0.1:5514"]
+udp = ["0.0.0.0:5515"]
+```
+
+## Environment Variables
+
+All settings can be overridden via environment variables with the `KIFA_` prefix:
+
+| Variable                            | Description                       | Default  |
+| ----------------------------------- | --------------------------------- | -------- |
+| `KIFA_DATA_DIR`                     | Storage directory                 | Required |
+| `KIFA_FLUSH_MODE`                   | `normal`, `cautious`, `emergency` | `normal` |
+| `KIFA_SEGMENT_SIZE_MIB`             | WAL segment size                  | `16`     |
+| `KIFA_MEMTABLE_FLUSH_THRESHOLD_MIB` | Memtable flush threshold          | `4`      |
+| `KIFA_COMPACTION_THRESHOLD`         | SSTable compaction trigger        | `4`      |
+| `KIFA_COMPACTION_ENABLED`           | Enable compaction                 | `true`   |
+| `KIFA_CHANNEL_CAPACITY`             | Ingester buffer size              | `1024`   |
+| `KIFA_STDIN`                        | Read from stdin                   | `false`  |
+| `KIFA_FILES`                        | Comma-separated file paths        |          |
+| `KIFA_TCP`                          | Comma-separated TCP addresses     |          |
+| `KIFA_UDP`                          | Comma-separated UDP addresses     |          |
+| `KIFA_LOG`                          | Log level filter (env_logger)     |          |
+
+## CLI Flags
+
+```bash title="Terminal"
+kifa daemon --help
+```
+
+| Flag                       | Description                               |
+| -------------------------- | ----------------------------------------- |
+| `-d, --data-dir`           | Directory for WAL, SSTables, and metadata |
+| `-c, --config`             | Path to TOML configuration file           |
+| `--flush-mode`             | WAL flush mode                            |
+| `--segment-size-mib`       | WAL segment size in MiB                   |
+| `--memtable-threshold-mib` | Flush memtable after this many MiB        |
+| `--compaction-threshold`   | Compact after this many SSTables          |
+| `--no-compaction`          | Disable background compaction             |
+| `--channel-capacity`       | Internal channel buffer size              |
+
+<CardGrid>
+  <LinkCard
+    title="CLI Reference"
+    description="Complete flag reference for all commands."
+    href="/kifa/reference/cli/"
+  />
+  <LinkCard
+    title="Configuration Reference"
+    description="Unified table of all settings across all layers."
+    href="/kifa/reference/config/"
+  />
+</CardGrid>

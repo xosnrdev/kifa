@@ -1,0 +1,52 @@
+---
+title: Exporting Data
+description: Export log entries to a file with atomic writes.
+---
+
+import { LinkCard, CardGrid } from "@astrojs/starlight/components";
+
+The `export` command writes entries to a file. Writes are atomic: partial exports are never visible at the output path.
+
+## Usage
+
+Export the last 24 hours as JSON:
+
+```bash title="Terminal"
+kifa export -d ./data --from-time 24h --format json -o transactions.json
+```
+
+Export a specific LSN range as CSV:
+
+```bash title="Terminal"
+kifa export -d ./data --from-lsn 1 --to-lsn 1000 --format csv -o audit.csv
+```
+
+## Options
+
+| Flag           | Description                                  | Default  |
+| -------------- | -------------------------------------------- | -------- |
+| `-o, --output` | Output file path                             | Required |
+| `--format`     | Output format (`text`, `json`, `csv`, `hex`) | `json`   |
+| `--from-lsn`   | Start from LSN (inclusive)                   |          |
+| `--to-lsn`     | End at LSN (inclusive)                       |          |
+| `--from-time`  | Filter from time                             |          |
+| `--to-time`    | Filter until time                            |          |
+
+The default format for `export` is `json`, unlike `query` which defaults to `text`.
+
+## Atomicity
+
+Kifa writes to a temporary file and renames it to the target path on completion. If the process is interrupted, no partial file remains at the output path. The temporary file is cleaned up on failure.
+
+<CardGrid>
+  <LinkCard
+    title="Querying Logs"
+    description="Interactive query with stdout output."
+    href="/kifa/guides/querying/"
+  />
+  <LinkCard
+    title="CLI Reference"
+    description="Complete flag reference for all commands."
+    href="/kifa/reference/cli/"
+  />
+</CardGrid>

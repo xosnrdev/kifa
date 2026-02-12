@@ -1,0 +1,77 @@
+---
+title: Deployment
+description: Deploy Kifa with systemd, signal handling, and production hardening.
+---
+
+import { LinkCard, CardGrid } from "@astrojs/starlight/components";
+
+Kifa runs as a single binary. Start it however the system starts processes.
+
+## Linux with Systemd
+
+A hardened systemd service file is included at `systemd/kifa.service`:
+
+```bash title="Terminal"
+# Copy service file
+sudo cp systemd/kifa.service /etc/systemd/system/
+
+# Edit configuration
+sudo systemctl edit kifa
+# Add: Environment=KIFA_TCP=127.0.0.1:5514
+
+# Enable and start
+sudo systemctl enable --now kifa
+
+# Check status
+sudo systemctl status kifa
+journalctl -u kifa -f
+```
+
+### Security Hardening
+
+The included service file enables:
+
+| Setting                      | Effect                               |
+| ---------------------------- | ------------------------------------ |
+| `DynamicUser=yes`            | Runs as ephemeral user               |
+| `ProtectSystem=strict`       | Read-only filesystem except data dir |
+| `PrivateNetwork=no`          | Allows TCP/UDP listeners             |
+| `MemoryDenyWriteExecute=yes` | Prevents code injection              |
+
+## Signal Handling
+
+| Signal            | Action                                      |
+| ----------------- | ------------------------------------------- |
+| `SIGINT` (Ctrl+C) | Graceful shutdown, flush pending data       |
+| `SIGTERM`         | Same as SIGINT (for systemd)                |
+| `SIGUSR1`         | Escalate flush mode (Cautious to Emergency) |
+
+Exit codes follow Unix convention:
+
+| Code  | Meaning               |
+| ----- | --------------------- |
+| `0`   | Clean exit            |
+| `130` | Terminated by SIGINT  |
+| `143` | Terminated by SIGTERM |
+
+Container orchestrators like Docker and Kubernetes use these exit codes to distinguish graceful termination from forced kills.
+
+## Security Considerations
+
+- **No encryption at rest.** Apply filesystem-level encryption (LUKS, dm-crypt) for sensitive data.
+- **Restrict data directory permissions.** Only the service user should have access.
+- **Bind listeners carefully.** Use `127.0.0.1` unless remote ingestion is explicitly needed.
+- **Review flush mode.** Balance durability requirements against performance for the deployment environment.
+
+<CardGrid>
+  <LinkCard
+    title="Choosing a Flush Mode"
+    description="Durability vs throughput trade-offs."
+    href="/kifa/guides/flush-modes/"
+  />
+  <LinkCard
+    title="Security Policy"
+    description="Vulnerability reporting and disclosure."
+    href="/kifa/security/"
+  />
+</CardGrid>

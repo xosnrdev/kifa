@@ -308,11 +308,7 @@ fn scan_segment(path: &Path) -> Result<(Vec<RecoveredEntry>, u64), Error> {
         let header =
             EntryHeader::from_bytes(header_buf.as_slice()[..ENTRY_HEADER_SIZE].try_into().unwrap());
 
-        if !header.validate() {
-            break;
-        }
-
-        if header.length == 0 {
+        if !header.validate() || header.length == 0 {
             break;
         }
 

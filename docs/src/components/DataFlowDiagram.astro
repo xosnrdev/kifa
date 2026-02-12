@@ -1,0 +1,243 @@
+---
+---
+
+<figure class="df-wrap not-content">
+	<svg
+		viewBox="0 0 640 540"
+		xmlns="http://www.w3.org/2000/svg"
+		role="img"
+		aria-labelledby="df-title df-desc"
+	>
+		<title id="df-title">Kifa Data Flow</title>
+		<desc id="df-desc">
+			Log entries flow from input sources through the ingester channel,
+			write-ahead log, memtable, SSTables, and compaction.
+		</desc>
+
+		<defs>
+			<marker
+				id="df-arrow"
+				viewBox="0 0 10 7"
+				refX="10"
+				refY="3.5"
+				markerWidth="7"
+				markerHeight="5"
+				orient="auto"
+			>
+				<polygon points="0 0, 10 3.5, 0 7" class="df-arrow-fill" />
+			</marker>
+		</defs>
+
+		<!-- ===================== Source Nodes ===================== -->
+		<g class="df-node df-source">
+			<rect x="80" y="16" width="110" height="36" rx="6" />
+			<text x="135" y="38">stdin</text>
+		</g>
+		<g class="df-node df-source">
+			<rect x="205" y="16" width="110" height="36" rx="6" />
+			<text x="260" y="38">File</text>
+		</g>
+		<g class="df-node df-source">
+			<rect x="330" y="16" width="110" height="36" rx="6" />
+			<text x="385" y="38">TCP</text>
+		</g>
+		<g class="df-node df-source">
+			<rect x="455" y="16" width="110" height="36" rx="6" />
+			<text x="510" y="38">UDP</text>
+		</g>
+
+		<!-- ============== Converging Lines to Ingester ============== -->
+		<line x1="135" y1="52" x2="320" y2="96" class="df-edge" />
+		<line x1="260" y1="52" x2="320" y2="96" class="df-edge" />
+		<line x1="385" y1="52" x2="320" y2="96" class="df-edge" />
+		<line x1="510" y1="52" x2="320" y2="96" class="df-edge" />
+
+		<!-- ================== Pipeline Stages ================== -->
+
+		<!-- Ingester Channel -->
+		<g class="df-node df-stage">
+			<rect x="190" y="96" width="260" height="42" rx="8" />
+			<text x="320" y="121">Ingester Channel</text>
+		</g>
+
+		<line x1="320" y1="138" x2="320" y2="184" class="df-edge df-flow" marker-end="url(#df-arrow)" />
+
+		<!-- Write-Ahead Log (emphasis node) -->
+		<g class="df-node df-stage df-wal">
+			<rect x="185" y="184" width="270" height="56" rx="8" class="df-wal-rect" />
+			<rect x="185" y="184" width="4" height="56" rx="2" class="df-accent-bar" />
+			<text x="320" y="208" class="df-label">Write-Ahead Log</text>
+			<text x="320" y="228" class="df-sublabel">16 MiB segments</text>
+		</g>
+		<text x="470" y="214" class="df-annotation">Durability layer</text>
+
+		<line x1="320" y1="240" x2="320" y2="290" class="df-edge df-flow" marker-end="url(#df-arrow)" />
+
+		<!-- Memtable -->
+		<g class="df-node df-stage">
+			<rect x="190" y="290" width="260" height="50" rx="8" />
+			<text x="320" y="312" class="df-label">Memtable</text>
+			<text x="320" y="330" class="df-sublabel">In-memory buffer</text>
+		</g>
+		<text x="465" y="314" class="df-annotation">Sorted by LSN</text>
+
+		<line x1="320" y1="340" x2="320" y2="390" class="df-edge df-flow" marker-end="url(#df-arrow)" />
+		<text x="334" y="370" class="df-flow-label">Flush</text>
+
+		<!-- SSTables -->
+		<g class="df-node df-stage">
+			<rect x="190" y="390" width="260" height="50" rx="8" />
+			<text x="320" y="412" class="df-label">SSTables</text>
+			<text x="320" y="430" class="df-sublabel">Immutable files</text>
+		</g>
+		<text x="465" y="414" class="df-annotation">Sorted on disk</text>
+
+		<line x1="320" y1="440" x2="320" y2="486" class="df-edge df-flow" marker-end="url(#df-arrow)" />
+		<text x="334" y="468" class="df-flow-label">Compaction</text>
+
+		<!-- Merged SSTables -->
+		<g class="df-node df-stage">
+			<rect x="190" y="486" width="260" height="42" rx="8" />
+			<text x="320" y="511">Merged SSTables</text>
+		</g>
+	</svg>
+</figure>
+
+<style is:global>
+	/* --------------------------------------------------------
+	   Data Flow Diagram: layout and responsive wrapper.
+	   -------------------------------------------------------- */
+
+	.df-wrap {
+		margin: 1.5rem auto 2rem;
+		padding: 0;
+		overflow-x: auto;
+		-webkit-overflow-scrolling: touch;
+	}
+
+	.df-wrap svg {
+		display: block;
+		width: 100%;
+		height: auto;
+		min-width: 480px;
+		margin: 0 auto;
+	}
+
+	/* --------------------------------------------------------
+	   Nodes: rounded rects with theme-aware fills.
+	   -------------------------------------------------------- */
+
+	.df-node rect {
+		fill: var(--sl-color-gray-6);
+		stroke: var(--sl-color-gray-4);
+		stroke-width: 1.5;
+		transition:
+			stroke 180ms ease-out,
+			filter 180ms ease-out;
+	}
+
+	.df-node:hover rect {
+		stroke: var(--sl-color-accent);
+	}
+
+	.df-node:hover rect:not(.df-accent-bar) {
+		filter: drop-shadow(0 0 6px oklch(0.7 0.08 75 / 0.2));
+	}
+
+	.df-node text {
+		fill: var(--sl-color-white);
+		font-family: var(--sl-font-mono);
+		font-size: 13px;
+		text-anchor: middle;
+		pointer-events: none;
+	}
+
+	/* Sublabels inside two-line nodes. */
+	.df-sublabel {
+		fill: var(--sl-color-gray-2) !important;
+		font-size: 11px !important;
+	}
+
+	/* Source nodes: slightly muted compared to pipeline. */
+	.df-source rect {
+		fill: var(--sl-color-black);
+		stroke: var(--sl-color-gray-4);
+		stroke-width: 1;
+	}
+
+	.df-source text {
+		font-size: 12px;
+		fill: var(--sl-color-gray-1) !important;
+	}
+
+	/* WAL emphasis: accent bar on left edge. */
+	.df-accent-bar {
+		fill: var(--sl-color-accent) !important;
+		stroke: none !important;
+		filter: none !important;
+		pointer-events: none;
+	}
+
+	.df-wal-rect {
+		stroke-width: 1.5;
+	}
+
+	/* --------------------------------------------------------
+	   Edges: connectors between nodes.
+	   -------------------------------------------------------- */
+
+	.df-edge {
+		stroke: var(--sl-color-gray-4);
+		stroke-width: 1.5;
+		fill: none;
+	}
+
+	.df-arrow-fill {
+		fill: var(--sl-color-gray-4);
+	}
+
+	/* Animated dashes on the main pipeline flow. */
+	.df-flow {
+		stroke-dasharray: 6 4;
+		stroke: var(--sl-color-gray-3);
+	}
+
+	@media (prefers-reduced-motion: no-preference) {
+		.df-flow {
+			animation: df-pulse 1.4s linear infinite;
+		}
+
+		@keyframes df-pulse {
+			to {
+				stroke-dashoffset: -10;
+			}
+		}
+	}
+
+	/* --------------------------------------------------------
+	   Annotations: secondary text beside nodes.
+	   -------------------------------------------------------- */
+
+	.df-annotation {
+		fill: var(--sl-color-gray-3);
+		font-family: var(--sl-font);
+		font-size: 11px;
+		opacity: 0.65;
+		transition: opacity 200ms ease-out;
+		pointer-events: none;
+	}
+
+	/* Show annotations more clearly when adjacent node is hovered. */
+	.df-node:hover ~ .df-annotation {
+		opacity: 1;
+	}
+
+	/* Flow labels between stages (Flush, Compaction). */
+	.df-flow-label {
+		fill: var(--sl-color-gray-3);
+		font-family: var(--sl-font);
+		font-size: 10px;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+	}
+</style>

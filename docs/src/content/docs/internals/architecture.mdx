@@ -3,43 +3,14 @@ title: Architecture
 description: How Kifa's storage engine works. WAL, memtable, SSTables, compaction, and crash recovery.
 ---
 
+import { Steps, LinkCard, CardGrid } from "@astrojs/starlight/components";
+import DataFlowDiagram from "../../../components/DataFlowDiagram.astro";
+
 Kifa is an LSM-tree (Log-Structured Merge-tree) optimized for append-only workloads. Entries flow through four stages: write-ahead log, memtable, SSTables, and compaction.
 
 ## Data Flow
 
-```
-┌─────────┐  ┌──────────┐  ┌─────────┐  ┌─────────┐
-│  stdin  │  │   File   │  │   TCP   │  │   UDP   │
-└────┬────┘  └────┬─────┘  └────┬────┘  └────┬────┘
-     │            │             │            │
-     └────────────┴──────┬──────┴────────────┘
-                         │
-                         ▼
-              ┌─────────────────────┐
-              │   Ingester Channel  │
-              └──────────┬──────────┘
-                         │
-                         ▼
-              ┌─────────────────────┐
-              │   Write-Ahead Log   │  ← Durability guarantee
-              │   (16 MiB segments) │
-              └──────────┬──────────┘
-                         │
-                         ▼
-              ┌─────────────────────┐
-              │      Memtable       │  ← In-memory, sorted by LSN
-              └──────────┬──────────┘
-                         │ Flush (threshold reached)
-                         ▼
-              ┌─────────────────────┐
-              │      SSTables       │  ← Immutable, sorted files
-              └──────────┬──────────┘
-                         │ Compaction (background)
-                         ▼
-              ┌─────────────────────┐
-              │   Merged SSTables   │
-              └─────────────────────┘
-```
+<DataFlowDiagram />
 
 ## Components
 
@@ -91,9 +62,29 @@ Each log entry contains three fields:
 
 On startup, Kifa:
 
-1. Reads the manifest to determine the checkpoint LSN.
-2. Replays all WAL entries after the checkpoint LSN into the memtable.
-3. Validates each entry's CRCs. Entries with invalid CRCs or incomplete trailers are discarded. They represent writes that did not complete before the crash.
-4. Reports recovery statistics: entries replayed, time range, and any gaps in the LSN sequence.
+<Steps>
+
+1. **Read manifest.** Determine the checkpoint LSN.
+
+2. **Replay WAL.** Replay all entries after the checkpoint LSN into the memtable.
+
+3. **Validate CRCs.** Entries with invalid CRCs or incomplete trailers are discarded. They represent writes that did not complete before the crash.
+
+4. **Report statistics.** Entries replayed, time range, and any gaps in the LSN sequence.
+
+</Steps>
 
 In Cautious mode, there are no gaps. Every entry that `append()` confirmed is on disk. In Normal mode, up to 49 entries between syncs may be missing after a crash.
+
+<CardGrid>
+  <LinkCard
+    title="Choosing a Flush Mode"
+    description="Durability vs throughput trade-offs."
+    href="/kifa/guides/flush-modes/"
+  />
+  <LinkCard
+    title="Contributing"
+    description="Development setup and code quality standards."
+    href="/kifa/contributing/"
+  />
+</CardGrid>

@@ -46,31 +46,7 @@ See the [Quick Start guide](https://xosnrdev.github.io/kifa/quick-start/) for a 
 
 ## Documentation
 
-Full documentation at **[xosnrdev.github.io/kifa](https://xosnrdev.github.io/kifa/)**.
-
-**Getting Started**:
-
-- [Installation](https://xosnrdev.github.io/kifa/install/)
-- [Quick Start](https://xosnrdev.github.io/kifa/quick-start/)
-
-**Guides**:
-
-- [Daemon](https://xosnrdev.github.io/kifa/guides/daemon/)
-- [Querying](https://xosnrdev.github.io/kifa/guides/querying/)
-- [Exporting](https://xosnrdev.github.io/kifa/guides/exporting/)
-- [Flush Modes](https://xosnrdev.github.io/kifa/guides/flush-modes/)
-- [Configuration](https://xosnrdev.github.io/kifa/guides/configuration/)
-- [Deployment](https://xosnrdev.github.io/kifa/guides/deployment/)
-
-**Reference**:
-
-- [CLI](https://xosnrdev.github.io/kifa/reference/cli/)
-- [Configuration](https://xosnrdev.github.io/kifa/reference/config/)
-- [Changelog](https://xosnrdev.github.io/kifa/reference/changelog/)
-
-**Internals**:
-
-- [Architecture](https://xosnrdev.github.io/kifa/internals/architecture/)
+- [xosnrdev.github.io/kifa](https://xosnrdev.github.io/kifa/)
 
 ## Contributing
 

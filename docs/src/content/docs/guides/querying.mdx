@@ -22,63 +22,63 @@ Without filters, `query` returns all entries.
 ## Time Formats
 
 <Tabs>
-  <TabItem label="Relative">
-    ```bash title="Terminal" kifa query -d ./data --from-time 1h # Last hour
-    kifa query -d ./data --from-time 30m # Last 30 minutes kifa query -d ./data
-    --from-time 2d # Last 2 days kifa query -d ./data --from-time 1h30m # Last
-    1.5 hours ```
-  </TabItem>
-  <TabItem label="Absolute">
-    ```bash title="Terminal" kifa query -d ./data --from-time "2026-01-29
-    12:00:00" kifa query -d ./data --from-time "2026-01-29T12:00:00Z" kifa query
-    -d ./data --from-time "2026-01-29" # Midnight ```
-  </TabItem>
+<TabItem label="Relative">
+```bash title="Terminal"
+kifa query -d ./data --from-time 1h      # Last hour
+kifa query -d ./data --from-time 30m     # Last 30 minutes
+kifa query -d ./data --from-time 2d      # Last 2 days
+kifa query -d ./data --from-time 1h30m   # Last 1.5 hours
+```
+</TabItem>
+<TabItem label="Absolute">
+```bash title="Terminal"
+kifa query -d ./data --from-time "2026-01-29 12:00:00"
+kifa query -d ./data --from-time "2026-01-29T12:00:00Z"
+kifa query -d ./data --from-time "2026-01-29"             # Midnight
+```
+</TabItem>
 </Tabs>
 
 ## Output Formats
 
 <Tabs syncKey="format">
-  <TabItem label="Text">
-    ```bash title="Terminal"
-    kifa query -d ./data --format text
-    ```
+<TabItem label="Text">
+```bash title="Terminal"
+kifa query -d ./data --format text
+```
 
-    ```text title="Output"
-    [1] 2026-01-31 18:30:00 UTC {"txn":"TXN-001","amount":5000}
-    ```
+```text title="Output"
+[1] 2026-01-31 18:30:00 UTC {"txn":"TXN-001","amount":5000}
+```
+</TabItem>
+<TabItem label="JSON">
+```bash title="Terminal"
+kifa query -d ./data --format json
+```
 
-  </TabItem>
-  <TabItem label="JSON">
-    ```bash title="Terminal"
-    kifa query -d ./data --format json
-    ```
+```json title="Output"
+{"lsn":1,"timestamp":"2026-01-31 18:30:00 UTC","timestamp_ms":1738348200000,"data":"{...}"}
+```
+</TabItem>
+<TabItem label="CSV">
+```bash title="Terminal"
+kifa query -d ./data --format csv
+```
 
-    ```json title="Output"
-    {"lsn":1,"timestamp":"2026-01-31 18:30:00 UTC","timestamp_ms":1738348200000,"data":"{...}"}
-    ```
+```csv title="Output"
+lsn,timestamp,timestamp_ms,data
+1,"2026-01-31 18:30:00 UTC",1738348200000,"{...}"
+```
+</TabItem>
+<TabItem label="Hex">
+```bash title="Terminal"
+kifa query -d ./data --format hex
+```
 
-  </TabItem>
-  <TabItem label="CSV">
-    ```bash title="Terminal"
-    kifa query -d ./data --format csv
-    ```
-
-    ```csv title="Output"
-    lsn,timestamp,timestamp_ms,data
-    1,"2026-01-31 18:30:00 UTC",1738348200000,"{...}"
-    ```
-
-  </TabItem>
-  <TabItem label="Hex">
-    ```bash title="Terminal"
-    kifa query -d ./data --format hex
-    ```
-
-    ```text title="Output"
-    0000000000000001 0000019c099fe600 7b22...
-    ```
-
-  </TabItem>
+```text title="Output"
+0000000000000001 0000019c099fe600 7b22...
+```
+</TabItem>
 </Tabs>
 
 ## Combining Filters

@@ -7,10 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-rc.2] - 2026-02-12
+
+### Added
+
+- Web documentation site at [xosnrdev.github.io/kifa](https://xosnrdev.github.io/kifa/).
+- CI workflow for GitHub Pages deployment.
+- OG image and social card meta tags (Twitter, LinkedIn, Slack, Discord).
+
 ### Changed
 
-- Hoisted write buffer from `SegmentWriter` into `WalWriter`, reducing per-entry allocation overhead.
-- Reduced instruction count across daemon and query paths.
+- Hoisted write buffer from `SegmentWriter` into `WalWriter`. The 1 MiB buffer now survives segment rotations instead of being re-zeroed on each rotation, cutting mimalloc memset from 14.6M to 1.2M instructions on a 50K-entry workload.
+- Reduced instruction count across daemon and query paths: zero-alloc timestamp formatting, PAIRS lookup table for decimal output, SAFE[256] table for JSON escaping, direct `write_all` replacing `write!`/`writeln!` macros, `read_until` replacing `lines()` to skip per-line UTF-8 validation.
+- Replaced `iter()` with `into_iter()` for `SstableReader`, removing unnecessary intermediate references.
+- Trimmed README from 568 lines to a landing page pointing to the docs site.
 
 ## [1.0.0-rc.1] - 2026-02-06
 
@@ -35,5 +45,6 @@ First release candidate.
 - Graceful shutdown on `SIGINT`/`SIGTERM` with pending data flush.
 - `lib-kifa` crate for embedding the storage engine directly in Rust applications.
 
-[Unreleased]: https://github.com/xosnrdev/kifa/compare/v1.0.0-rc.1...HEAD
+[Unreleased]: https://github.com/xosnrdev/kifa/compare/v1.0.0-rc.2...HEAD
+[1.0.0-rc.2]: https://github.com/xosnrdev/kifa/compare/v1.0.0-rc.1...v1.0.0-rc.2
 [1.0.0-rc.1]: https://github.com/xosnrdev/kifa/releases/tag/v1.0.0-rc.1

@@ -159,7 +159,7 @@ pub struct RecoveryReport {
     /// LSN range replayed from WAL, if any.
     pub replayed_lsn: Range<Option<u64>>,
 
-    /// Timestamp range replayed entry (milliseconds since Unix epoch).
+    /// Timestamp range of replayed entry (milliseconds since Unix epoch).
     pub timestamp_ms: Range<Option<u64>>,
 
     /// Gaps in the LSN sequence (indicates data loss).

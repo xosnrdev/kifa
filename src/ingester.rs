@@ -23,7 +23,7 @@ use lib_kifa::{FlushMode, MEBI};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct IngesterStats {
     pub entries_ingested: u64,
     pub entries_failed: u64,
@@ -138,7 +138,7 @@ impl Ingester {
     }
 }
 
-#[derive(Debug)]
+#[cfg_attr(test, derive(Debug))]
 pub enum SendError {
     Disconnected,
     Full(Vec<u8>),

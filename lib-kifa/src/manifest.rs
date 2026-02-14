@@ -71,7 +71,6 @@ pub struct SstableEntry {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
 struct Header {
     magic: u64,
     version: u32,
@@ -80,7 +79,7 @@ struct Header {
 }
 
 impl Header {
-    fn as_bytes(self) -> [u8; HEADER_SIZE] {
+    fn as_bytes(&self) -> [u8; HEADER_SIZE] {
         let mut buf = [0; HEADER_SIZE];
         buf[0..8].copy_from_slice(&self.magic.to_le_bytes());
         buf[8..12].copy_from_slice(&self.version.to_le_bytes());
@@ -115,7 +114,6 @@ impl Header {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
 struct Footer {
     content_crc: u32,
     magic: u64,
@@ -126,7 +124,7 @@ impl Footer {
         Self { content_crc, magic: MAGIC_FOOTER }
     }
 
-    fn as_bytes(self) -> [u8; FOOTER_SIZE] {
+    fn as_bytes(&self) -> [u8; FOOTER_SIZE] {
         let mut buf = [0; FOOTER_SIZE];
         buf[0..4].copy_from_slice(&self.content_crc.to_le_bytes());
         buf[4..12].copy_from_slice(&self.magic.to_le_bytes());
@@ -153,7 +151,7 @@ impl Footer {
     }
 }
 
-#[derive(Debug, Clone)]
+#[cfg_attr(test, derive(Debug))]
 pub struct Manifest {
     path: PathBuf,
     checkpoint_lsn: u64,

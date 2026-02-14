@@ -115,7 +115,6 @@ impl EntryHeader {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
 struct EntryFooter {
     data_crc: u32,
     padding: u32,
@@ -146,7 +145,7 @@ impl EntryFooter {
         self.magic == MAGIC_TRAILER && self.data_crc == hasher.finalize()
     }
 
-    fn as_bytes(self) -> [u8; ENTRY_FOOTER_SIZE] {
+    fn as_bytes(&self) -> [u8; ENTRY_FOOTER_SIZE] {
         let mut buf = [0; ENTRY_FOOTER_SIZE];
         buf[0..4].copy_from_slice(&self.data_crc.to_le_bytes());
         buf[4..8].copy_from_slice(&self.padding.to_le_bytes());
@@ -167,7 +166,6 @@ impl EntryFooter {
 }
 
 /// Statistics about the write-ahead log.
-#[derive(Debug, Clone, Copy)]
 pub struct WalStats {
     /// The LSN that will be assigned to the next appended entry.
     pub next_lsn: u64,

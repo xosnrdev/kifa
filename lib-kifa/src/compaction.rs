@@ -50,7 +50,6 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-#[derive(Debug)]
 pub struct CompactionResult {
     pub input_count: usize,
     pub output_path: PathBuf,
@@ -60,7 +59,6 @@ pub struct CompactionResult {
     pub removed_paths: Vec<PathBuf>,
 }
 
-#[derive(Debug)]
 pub struct CompactionOutput {
     pub output_path: PathBuf,
     pub entry_count: u32,

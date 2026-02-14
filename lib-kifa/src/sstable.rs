@@ -59,7 +59,6 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {}
 
 #[repr(C)]
-#[derive(Clone, Copy)]
 pub struct Header {
     pub magic: u64,
     pub version: u32,
@@ -69,7 +68,7 @@ pub struct Header {
 }
 
 impl Header {
-    pub fn as_bytes(self) -> [u8; HEADER_SIZE] {
+    pub fn as_bytes(&self) -> [u8; HEADER_SIZE] {
         let mut buf = [0; HEADER_SIZE];
         buf[0..8].copy_from_slice(&self.magic.to_le_bytes());
         buf[8..12].copy_from_slice(&self.version.to_le_bytes());
@@ -109,7 +108,6 @@ impl Header {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
 pub struct Footer {
     data_crc: u32,
     reserved: u32,
@@ -121,7 +119,7 @@ impl Footer {
         Self { data_crc, reserved: 0, magic: MAGIC_FOOTER }
     }
 
-    pub fn as_bytes(self) -> [u8; FOOTER_SIZE] {
+    pub fn as_bytes(&self) -> [u8; FOOTER_SIZE] {
         let mut buf = [0; FOOTER_SIZE];
         buf[0..4].copy_from_slice(&self.data_crc.to_le_bytes());
         buf[4..8].copy_from_slice(&self.reserved.to_le_bytes());

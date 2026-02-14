@@ -49,7 +49,7 @@ pub fn run() -> Result<ExitCode> {
     }
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Clone, Copy, ValueEnum)]
 enum FlushModeArg {
     Normal,
     Cautious,

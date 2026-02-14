@@ -94,7 +94,6 @@ impl std::error::Error for Error {}
 ///     compaction_enabled: true,
 /// };
 /// ```
-#[derive(Debug, Clone)]
 pub struct Config {
     /// Flush memtable to `SSTable` when it reaches this size in bytes.
     ///
@@ -192,7 +191,6 @@ pub struct RecoveryReport {
 ///
 /// Useful for monitoring and debugging. All values are point-in-time
 /// snapshots and may change immediately after reading.
-#[derive(Debug, Clone, Copy)]
 pub struct Stats {
     /// WAL statistics (LSN counters, flush mode).
     pub wal: WalStats,

@@ -1,5 +1,6 @@
 #![warn(clippy::pedantic)]
 #![allow(clippy::cast_possible_truncation)]
+#![feature(new_range_api)]
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;

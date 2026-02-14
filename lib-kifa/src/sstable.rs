@@ -7,6 +7,7 @@
 use std::fs::{File, OpenOptions, remove_file};
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
+use std::range::Range;
 use std::sync::Arc;
 use std::{fmt, fs};
 
@@ -17,7 +18,7 @@ use crate::{Entry, MEBI, map_err};
 
 pub const MAGIC_HEADER: u64 = 0x5851_F42D_4C95_7F2D;
 const MAGIC_FOOTER: u64 = 0x27BB_2EE6_87B0_B0FD;
-pub const HEADER_SIZE: usize = 32;
+pub const HEADER_SIZE: usize = 48;
 const FOOTER_SIZE: usize = 16;
 pub const MAX_ENTRY_SIZE: usize = MEBI;
 
@@ -63,8 +64,8 @@ pub struct Header {
     pub magic: u64,
     pub version: u32,
     pub entry_count: u32,
-    pub min_lsn: u64,
-    pub max_lsn: u64,
+    pub lsn: Range<u64>,
+    pub timestamp_ms: Range<u64>,
 }
 
 impl Header {
@@ -73,8 +74,10 @@ impl Header {
         buf[0..8].copy_from_slice(&self.magic.to_le_bytes());
         buf[8..12].copy_from_slice(&self.version.to_le_bytes());
         buf[12..16].copy_from_slice(&self.entry_count.to_le_bytes());
-        buf[16..24].copy_from_slice(&self.min_lsn.to_le_bytes());
-        buf[24..32].copy_from_slice(&self.max_lsn.to_le_bytes());
+        buf[16..24].copy_from_slice(&self.lsn.start.to_le_bytes());
+        buf[24..32].copy_from_slice(&self.lsn.end.to_le_bytes());
+        buf[32..40].copy_from_slice(&self.timestamp_ms.start.to_le_bytes());
+        buf[40..48].copy_from_slice(&self.timestamp_ms.end.to_le_bytes());
         buf
     }
 
@@ -85,14 +88,26 @@ impl Header {
             ]),
             version: u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
             entry_count: u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]),
-            min_lsn: u64::from_le_bytes([
-                bytes[16], bytes[17], bytes[18], bytes[19], bytes[20], bytes[21], bytes[22],
-                bytes[23],
-            ]),
-            max_lsn: u64::from_le_bytes([
-                bytes[24], bytes[25], bytes[26], bytes[27], bytes[28], bytes[29], bytes[30],
-                bytes[31],
-            ]),
+            lsn: Range {
+                start: u64::from_le_bytes([
+                    bytes[16], bytes[17], bytes[18], bytes[19], bytes[20], bytes[21], bytes[22],
+                    bytes[23],
+                ]),
+                end: u64::from_le_bytes([
+                    bytes[24], bytes[25], bytes[26], bytes[27], bytes[28], bytes[29], bytes[30],
+                    bytes[31],
+                ]),
+            },
+            timestamp_ms: Range {
+                start: u64::from_le_bytes([
+                    bytes[32], bytes[33], bytes[34], bytes[35], bytes[36], bytes[37], bytes[38],
+                    bytes[39],
+                ]),
+                end: u64::from_le_bytes([
+                    bytes[40], bytes[41], bytes[42], bytes[43], bytes[44], bytes[45], bytes[46],
+                    bytes[47],
+                ]),
+            },
         }
     }
 
@@ -154,8 +169,8 @@ impl Footer {
 pub struct SstableInfo {
     pub path: PathBuf,
     pub entry_count: u32,
-    pub min_lsn: u64,
-    pub max_lsn: u64,
+    pub lsn: Range<u64>,
+    pub timestamp_ms: Range<u64>,
 }
 
 pub fn flush_memtable(memtable: &Memtable, final_path: &Path) -> Result<SstableInfo, Error> {
@@ -171,8 +186,8 @@ pub fn flush_memtable(memtable: &Memtable, final_path: &Path) -> Result<SstableI
     let mut hasher = crc32fast::Hasher::new();
 
     let mut entry_count = 0;
-    let mut min_lsn = u64::MAX;
-    let mut max_lsn = 0;
+    let mut lsn = Range { start: u64::MAX, end: 0 };
+    let mut timestamp_ms = Range { start: u64::MAX, end: 0 };
     let mut prev_lsn = 0;
 
     // Entry count and LSN range are unknown until iteration completes. Writing zeros here
@@ -201,11 +216,15 @@ pub fn flush_memtable(memtable: &Memtable, final_path: &Path) -> Result<SstableI
         writer.write_all(&length_bytes)?;
         writer.write_all(&entry.data)?;
 
-        min_lsn = min_lsn.min(entry.lsn);
-        max_lsn = max_lsn.max(entry.lsn);
+        lsn.start = lsn.start.min(entry.lsn);
+        lsn.end = lsn.end.max(entry.lsn);
+        timestamp_ms.start = timestamp_ms.start.min(entry.timestamp_ms);
+        timestamp_ms.end = timestamp_ms.end.max(entry.timestamp_ms);
         prev_lsn = entry.lsn;
         entry_count += 1;
     }
+
+    assert!(timestamp_ms.start <= timestamp_ms.end);
 
     let data_crc = hasher.finalize();
     let footer = Footer::new(data_crc);
@@ -220,7 +239,7 @@ pub fn flush_memtable(memtable: &Memtable, final_path: &Path) -> Result<SstableI
     sync_file(&file);
     drop(file);
 
-    let header = Header { magic: MAGIC_HEADER, version: VERSION, entry_count, min_lsn, max_lsn };
+    let header = Header { magic: MAGIC_HEADER, version: VERSION, entry_count, lsn, timestamp_ms };
     let mut file = OpenOptions::new().write(true).open(&temp_path)?;
     file.write_all(&header.as_bytes())?;
     sync_file(&file);
@@ -228,7 +247,7 @@ pub fn flush_memtable(memtable: &Memtable, final_path: &Path) -> Result<SstableI
 
     atomic_rename(&temp_path, final_path)?;
 
-    Ok(SstableInfo { path: final_path.to_path_buf(), entry_count, min_lsn, max_lsn })
+    Ok(SstableInfo { path: final_path.to_path_buf(), entry_count, lsn, timestamp_ms })
 }
 
 pub fn cleanup_temp_files(dir: &Path) -> Result<usize, Error> {
@@ -264,21 +283,6 @@ impl SstableReader {
         header.validate()?;
 
         Ok(Self { reader, header, hasher: crc32fast::Hasher::new(), entries_read: 0 })
-    }
-
-    #[cfg(test)]
-    const fn entry_count(&self) -> u32 {
-        self.header.entry_count
-    }
-
-    #[cfg(test)]
-    const fn min_lsn(&self) -> u64 {
-        self.header.min_lsn
-    }
-
-    #[cfg(test)]
-    const fn max_lsn(&self) -> u64 {
-        self.header.max_lsn
     }
 
     pub fn read_entry(&mut self) -> Result<Option<Entry>, Error> {
@@ -399,8 +403,8 @@ impl Iterator for SstableIter {
 }
 
 #[must_use]
-pub fn sstable_name(min_lsn: u64, max_lsn: u64) -> String {
-    format!("{min_lsn:016x}_{max_lsn:016x}.sst")
+pub fn sstable_name(lsn: Range<u64>) -> String {
+    format!("{:016x}_{:016x}.sst", lsn.start, lsn.end)
 }
 
 #[cfg(test)]
@@ -415,8 +419,8 @@ mod tests {
             magic: MAGIC_HEADER,
             version: VERSION,
             entry_count: 42,
-            min_lsn: 1,
-            max_lsn: 100,
+            lsn: Range::from(1..100),
+            timestamp_ms: Range::from(5000..9000),
         };
 
         let bytes = header.as_bytes();
@@ -425,8 +429,10 @@ mod tests {
         assert_eq!(restored.magic, MAGIC_HEADER);
         assert_eq!(restored.version, VERSION);
         assert_eq!(restored.entry_count, 42);
-        assert_eq!(restored.min_lsn, 1);
-        assert_eq!(restored.max_lsn, 100);
+        assert_eq!(restored.lsn.start, 1);
+        assert_eq!(restored.lsn.end, 100);
+        assert_eq!(restored.timestamp_ms.start, 5000);
+        assert_eq!(restored.timestamp_ms.end, 9000);
     }
 
     #[test]
@@ -441,16 +447,26 @@ mod tests {
 
     #[test]
     fn test_header_validation_invalid_magic() {
-        let header =
-            Header { magic: 0xBAD, version: VERSION, entry_count: 0, min_lsn: 0, max_lsn: 0 };
+        let header = Header {
+            magic: 0xBAD,
+            version: VERSION,
+            entry_count: 0,
+            lsn: Range::default(),
+            timestamp_ms: Range::default(),
+        };
 
         assert!(matches!(header.validate(), Err(Error::InvalidMagic)));
     }
 
     #[test]
     fn test_header_validation_unsupported_version() {
-        let header =
-            Header { magic: MAGIC_HEADER, version: 99, entry_count: 0, min_lsn: 0, max_lsn: 0 };
+        let header = Header {
+            magic: MAGIC_HEADER,
+            version: 99,
+            entry_count: 0,
+            lsn: Range::default(),
+            timestamp_ms: Range::default(),
+        };
 
         assert!(matches!(
             header.validate(),
@@ -484,14 +500,18 @@ mod tests {
         let info = flush_memtable(&memtable, &path).unwrap();
 
         assert_eq!(info.entry_count, 1);
-        assert_eq!(info.min_lsn, 1);
-        assert_eq!(info.max_lsn, 1);
+        assert_eq!(info.lsn.start, 1);
+        assert_eq!(info.lsn.end, 1);
+        assert_eq!(info.timestamp_ms.start, 1000);
+        assert_eq!(info.timestamp_ms.end, 1000);
         assert!(path.exists());
 
         let reader = SstableReader::open(&path).unwrap();
-        assert_eq!(reader.entry_count(), 1);
-        assert_eq!(reader.min_lsn(), 1);
-        assert_eq!(reader.max_lsn(), 1);
+        assert_eq!(reader.header.entry_count, 1);
+        assert_eq!(reader.header.lsn.start, 1);
+        assert_eq!(reader.header.lsn.end, 1);
+        assert_eq!(reader.header.timestamp_ms.start, 1000);
+        assert_eq!(reader.header.timestamp_ms.end, 1000);
 
         let entries = reader.into_entries().unwrap();
         assert_eq!(entries.len(), 1);
@@ -513,8 +533,10 @@ mod tests {
         let info = flush_memtable(&memtable, &path).unwrap();
 
         assert_eq!(info.entry_count, 3);
-        assert_eq!(info.min_lsn, 10);
-        assert_eq!(info.max_lsn, 30);
+        assert_eq!(info.lsn.start, 10);
+        assert_eq!(info.lsn.end, 30);
+        assert_eq!(info.timestamp_ms.start, 1000);
+        assert_eq!(info.timestamp_ms.end, 3000);
 
         let entries = SstableReader::open(&path).unwrap().into_entries().unwrap();
 
@@ -585,7 +607,7 @@ mod tests {
 
     #[test]
     fn test_sstable_name_format() {
-        let name = sstable_name(1, 100);
+        let name = sstable_name((1..100).into());
         assert_eq!(name, "0000000000000001_0000000000000064.sst");
     }
 
@@ -603,7 +625,7 @@ mod tests {
         flush_memtable(&memtable, &path).unwrap();
 
         let reader = SstableReader::open(&path).unwrap();
-        assert_eq!(reader.entry_count(), 10);
+        assert_eq!(reader.header.entry_count, 10);
         assert!(reader.validate_footer().is_ok());
     }
 

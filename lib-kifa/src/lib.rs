@@ -5,6 +5,7 @@
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap
 )]
+#![feature(new_range_api)]
 
 use std::str::FromStr;
 use std::sync::Arc;

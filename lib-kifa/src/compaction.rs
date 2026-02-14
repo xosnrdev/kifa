@@ -11,6 +11,7 @@ use std::fmt;
 use std::fs::{File, OpenOptions, remove_file};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::range::Range;
 
 use crate::common::{atomic_rename, temp_path};
 use crate::helpers::{HeapEntry, VERSION, sync_file};
@@ -54,23 +55,22 @@ pub struct CompactionResult {
     pub input_count: usize,
     pub output_path: PathBuf,
     pub entry_count: u32,
-    pub min_lsn: u64,
-    pub max_lsn: u64,
+    pub lsn: Range<u64>,
     pub removed_paths: Vec<PathBuf>,
 }
 
 pub struct CompactionOutput {
     pub output_path: PathBuf,
     pub entry_count: u32,
-    pub min_lsn: u64,
-    pub max_lsn: u64,
+    pub lsn: Range<u64>,
+    pub timestamp_ms: Range<u64>,
     pub input_paths: Vec<PathBuf>,
 }
 
 struct MergeStats {
     entry_count: u32,
-    min_lsn: u64,
-    max_lsn: u64,
+    lsn: Range<u64>,
+    timestamp_ms: Range<u64>,
     data_crc: u32,
 }
 
@@ -81,8 +81,8 @@ fn merge_entries(
 ) -> Result<MergeStats, Error> {
     let mut hasher = crc32fast::Hasher::new();
     let mut entry_count = 0;
-    let mut min_lsn = u64::MAX;
-    let mut max_lsn = 0;
+    let mut lsn = Range { start: u64::MAX, end: 0 };
+    let mut timestamp_ms = Range { start: u64::MAX, end: 0 };
     let mut prev_lsn = 0;
 
     while let Some(Reverse(heap_entry)) = heap.pop() {
@@ -118,8 +118,10 @@ fn merge_entries(
         writer.write_all(&length_bytes)?;
         writer.write_all(&heap_entry.data)?;
 
-        min_lsn = min_lsn.min(heap_entry.lsn);
-        max_lsn = max_lsn.max(heap_entry.lsn);
+        lsn.start = lsn.start.min(heap_entry.lsn);
+        lsn.end = lsn.end.max(heap_entry.lsn);
+        timestamp_ms.start = timestamp_ms.start.min(heap_entry.timestamp_ms);
+        timestamp_ms.end = timestamp_ms.end.max(heap_entry.timestamp_ms);
         prev_lsn = heap_entry.lsn;
         entry_count += 1;
 
@@ -141,7 +143,7 @@ fn merge_entries(
         }
     }
 
-    Ok(MergeStats { entry_count, min_lsn, max_lsn, data_crc: hasher.finalize() })
+    Ok(MergeStats { entry_count, lsn, timestamp_ms, data_crc: hasher.finalize() })
 }
 
 fn finalize_sstable(
@@ -163,8 +165,8 @@ fn finalize_sstable(
         magic: MAGIC_HEADER,
         version: VERSION,
         entry_count: stats.entry_count,
-        min_lsn: stats.min_lsn,
-        max_lsn: stats.max_lsn,
+        lsn: stats.lsn,
+        timestamp_ms: stats.timestamp_ms,
     };
 
     // Reopens the file to overwrite the placeholder header now that stats are known.
@@ -211,9 +213,12 @@ pub fn run_compaction(dir: &Path, inputs: &[SstableEntry]) -> Result<CompactionO
         iters.push(iter);
     }
 
-    let global_min_lsn = inputs.iter().map(|e| e.min_lsn).min().unwrap_or_default();
-    let global_max_lsn = inputs.iter().map(|e| e.max_lsn).max().unwrap_or_default();
-    let output_name = sstable_name(global_min_lsn, global_max_lsn);
+    let lsn = Range {
+        start: inputs.iter().map(|e| e.lsn.start).min().unwrap_or_default(),
+        end: inputs.iter().map(|e| e.lsn.end).max().unwrap_or_default(),
+    };
+
+    let output_name = sstable_name(lsn);
     let output_path = dir.join(&output_name);
     let temp_output = temp_path(&output_path);
 
@@ -244,8 +249,8 @@ pub fn run_compaction(dir: &Path, inputs: &[SstableEntry]) -> Result<CompactionO
     Ok(CompactionOutput {
         output_path,
         entry_count: stats.entry_count,
-        min_lsn: stats.min_lsn,
-        max_lsn: stats.max_lsn,
+        lsn: stats.lsn,
+        timestamp_ms: stats.timestamp_ms,
         input_paths,
     })
 }
@@ -265,7 +270,7 @@ pub fn commit_compaction(
     // output path matches an existing input (same LSN range).
     let already_registered = output.input_paths.contains(&output.output_path);
     if !already_registered {
-        manifest.register_sstable(output.output_path.clone(), output.min_lsn, output.max_lsn)?;
+        manifest.register_sstable(output.output_path.clone(), output.lsn, output.timestamp_ms)?;
     }
     manifest.save()?;
 
@@ -277,8 +282,7 @@ pub fn commit_compaction(
         input_count: output.input_paths.len(),
         output_path: output.output_path,
         entry_count: output.entry_count,
-        min_lsn: output.min_lsn,
-        max_lsn: output.max_lsn,
+        lsn: output.lsn,
         removed_paths,
     })
 }
@@ -309,12 +313,13 @@ mod tests {
             memtable.insert(lsn, 1000 + i, Arc::from([lsn as u8; 10]));
         }
 
-        let min_lsn = lsn_start;
-        let max_lsn = lsn_start + count - 1;
-        let path = dir.join(sstable_name(min_lsn, max_lsn));
+        let lsn = Range::from(lsn_start..lsn_start + count - 1);
+        let timestamp_ms = Range::from(1000..1000 + count - 1);
+
+        let path = dir.join(sstable_name(lsn));
         flush_memtable(&memtable, &path).unwrap();
 
-        SstableEntry { path, min_lsn, max_lsn }
+        SstableEntry { path, lsn, timestamp_ms }
     }
 
     #[test]
@@ -324,7 +329,7 @@ mod tests {
         let mut manifest = Manifest::new(manifest_path);
 
         let entry = create_sstable(temp_dir.path(), 1, 10);
-        manifest.register_sstable(entry.path.clone(), entry.min_lsn, entry.max_lsn).unwrap();
+        manifest.register_sstable(entry.path.clone(), entry.lsn, entry.timestamp_ms).unwrap();
 
         let inputs = manifest.sstables().to_vec();
         let result = compact_sstables(temp_dir.path(), &inputs, &mut manifest).unwrap();
@@ -346,17 +351,17 @@ mod tests {
         let entry2 = create_sstable(temp_dir.path(), 6, 5);
         let entry3 = create_sstable(temp_dir.path(), 11, 5);
 
-        manifest.register_sstable(entry1.path.clone(), entry1.min_lsn, entry1.max_lsn).unwrap();
-        manifest.register_sstable(entry2.path.clone(), entry2.min_lsn, entry2.max_lsn).unwrap();
-        manifest.register_sstable(entry3.path.clone(), entry3.min_lsn, entry3.max_lsn).unwrap();
+        manifest.register_sstable(entry1.path.clone(), entry1.lsn, entry1.timestamp_ms).unwrap();
+        manifest.register_sstable(entry2.path.clone(), entry2.lsn, entry2.timestamp_ms).unwrap();
+        manifest.register_sstable(entry3.path.clone(), entry3.lsn, entry3.timestamp_ms).unwrap();
 
         let inputs = manifest.sstables().to_vec();
         let result = compact_sstables(temp_dir.path(), &inputs, &mut manifest).unwrap();
 
         assert_eq!(result.input_count, 3);
         assert_eq!(result.entry_count, 15);
-        assert_eq!(result.min_lsn, 1);
-        assert_eq!(result.max_lsn, 15);
+        assert_eq!(result.lsn.start, 1);
+        assert_eq!(result.lsn.end, 15);
         assert_eq!(manifest.sstable_count(), 1);
 
         for path in &result.removed_paths {
@@ -373,8 +378,8 @@ mod tests {
         let entry1 = create_sstable(temp_dir.path(), 1, 5);
         let entry2 = create_sstable(temp_dir.path(), 10, 5);
 
-        manifest.register_sstable(entry1.path.clone(), entry1.min_lsn, entry1.max_lsn).unwrap();
-        manifest.register_sstable(entry2.path.clone(), entry2.min_lsn, entry2.max_lsn).unwrap();
+        manifest.register_sstable(entry1.path.clone(), entry1.lsn, entry1.timestamp_ms).unwrap();
+        manifest.register_sstable(entry2.path.clone(), entry2.lsn, entry2.timestamp_ms).unwrap();
 
         let inputs = manifest.sstables().to_vec();
         let result = compact_sstables(temp_dir.path(), &inputs, &mut manifest).unwrap();
@@ -407,8 +412,8 @@ mod tests {
         let entry1 = create_sstable(temp_dir.path(), 1, 5);
         let entry2 = create_sstable(temp_dir.path(), 6, 5);
 
-        manifest.register_sstable(entry1.path.clone(), entry1.min_lsn, entry1.max_lsn).unwrap();
-        manifest.register_sstable(entry2.path.clone(), entry2.min_lsn, entry2.max_lsn).unwrap();
+        manifest.register_sstable(entry1.path.clone(), entry1.lsn, entry1.timestamp_ms).unwrap();
+        manifest.register_sstable(entry2.path.clone(), entry2.lsn, entry2.timestamp_ms).unwrap();
         manifest.save().unwrap();
 
         let inputs = manifest.sstables().to_vec();
@@ -421,13 +426,24 @@ mod tests {
 
     #[test]
     fn test_prepare_compaction_threshold() {
-        let one_entry =
-            vec![SstableEntry { path: PathBuf::from("a.sst"), min_lsn: 1, max_lsn: 10 }];
+        let one_entry = vec![SstableEntry {
+            path: PathBuf::from("a.sst"),
+            lsn: Range::from(1..10),
+            timestamp_ms: Range::from(1000..2000),
+        }];
         assert!(prepare_compaction(&one_entry, 2).is_none());
 
         let two_entries = vec![
-            SstableEntry { path: PathBuf::from("a.sst"), min_lsn: 1, max_lsn: 10 },
-            SstableEntry { path: PathBuf::from("b.sst"), min_lsn: 11, max_lsn: 20 },
+            SstableEntry {
+                path: PathBuf::from("a.sst"),
+                lsn: Range::from(1..10),
+                timestamp_ms: Range::from(1000..2000),
+            },
+            SstableEntry {
+                path: PathBuf::from("b.sst"),
+                lsn: Range::from(11..20),
+                timestamp_ms: Range::from(2000..3000),
+            },
         ];
         let candidates = prepare_compaction(&two_entries, 2).unwrap();
         assert_eq!(candidates.len(), 2);
@@ -442,8 +458,8 @@ mod tests {
         let entry1 = create_sstable(temp_dir.path(), 1, 5);
         let entry2 = create_sstable(temp_dir.path(), 6, 5);
 
-        manifest.register_sstable(entry1.path.clone(), entry1.min_lsn, entry1.max_lsn).unwrap();
-        manifest.register_sstable(entry2.path.clone(), entry2.min_lsn, entry2.max_lsn).unwrap();
+        manifest.register_sstable(entry1.path.clone(), entry1.lsn, entry1.timestamp_ms).unwrap();
+        manifest.register_sstable(entry2.path.clone(), entry2.lsn, entry2.timestamp_ms).unwrap();
 
         let inputs = manifest.sstables().to_vec();
 

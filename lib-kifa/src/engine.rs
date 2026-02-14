@@ -9,8 +9,8 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
-use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::range::Range;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{self, Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
@@ -156,17 +156,11 @@ pub struct RecoveryReport {
     /// Entries with LSN <= this value are safely on disk.
     pub checkpoint_lsn: u64,
 
-    /// First LSN replayed from WAL, if any.
-    pub first_replayed_lsn: Option<u64>,
+    /// LSN range replayed from WAL, if any.
+    pub replayed_lsn: Range<Option<u64>>,
 
-    /// Last LSN replayed from WAL, if any.
-    pub last_replayed_lsn: Option<u64>,
-
-    /// Timestamp of first replayed entry (milliseconds since Unix epoch).
-    pub first_timestamp_ms: Option<u64>,
-
-    /// Timestamp of last replayed entry (milliseconds since Unix epoch).
-    pub last_timestamp_ms: Option<u64>,
+    /// Timestamp range replayed entry (milliseconds since Unix epoch).
+    pub timestamp_ms: Range<Option<u64>>,
 
     /// Gaps in the LSN sequence (indicates data loss).
     ///
@@ -362,10 +356,8 @@ impl StorageEngine {
             RecoveryReport {
                 wal_entries_replayed: replay_report.entries_replayed,
                 checkpoint_lsn,
-                first_replayed_lsn: replay_report.first_lsn,
-                last_replayed_lsn: replay_report.last_lsn,
-                first_timestamp_ms: replay_report.first_timestamp_ms,
-                last_timestamp_ms: replay_report.last_timestamp_ms,
+                replayed_lsn: replay_report.lsn,
+                timestamp_ms: replay_report.timestamp_ms,
                 gaps: replay_report.gaps,
                 sstable_count: inner.manifest.sstable_count(),
                 temp_files_cleaned,
@@ -506,9 +498,12 @@ impl StorageEngine {
         // Freezing prevents new inserts while the memtable is being flushed to disk.
         inner.memtable.freeze();
 
-        let min_lsn = inner.memtable.iter().next().map_or(0, |e| e.lsn);
-        let max_lsn = inner.memtable.last_lsn();
-        let sstable_path = self.dir.join(sstable::sstable_name(min_lsn, max_lsn));
+        let lsn = Range {
+            start: inner.memtable.iter().next().map_or(0, |e| e.lsn),
+            end: inner.memtable.last_lsn(),
+        };
+
+        let sstable_path = self.dir.join(sstable::sstable_name(lsn));
 
         let info = match sstable::flush_memtable(&inner.memtable, &sstable_path) {
             Ok(info) => info,
@@ -519,7 +514,7 @@ impl StorageEngine {
         };
 
         let manifest_result =
-            inner.manifest.register_sstable(info.path.clone(), info.min_lsn, info.max_lsn);
+            inner.manifest.register_sstable(info.path.clone(), info.lsn, info.timestamp_ms);
 
         if let Err(e) = manifest_result {
             let _ = fs::remove_file(&sstable_path);
@@ -542,8 +537,8 @@ impl StorageEngine {
         log::info!(
             "Memtable flushed: {} entries, LSN {}-{}, path {}",
             info.entry_count,
-            info.min_lsn,
-            info.max_lsn,
+            info.lsn.start,
+            info.lsn.end,
             info.path.display()
         );
 
@@ -589,6 +584,23 @@ impl StorageEngine {
     pub fn scan(&self, start_lsn: u64, end_lsn: u64) -> Result<Vec<Entry>, Error> {
         let snapshot = self.snapshot();
         snapshot.scan(start_lsn, end_lsn)
+    }
+
+    /// Returns entries within an LSN range, pruning `SSTables` by timestamp bounds.
+    ///
+    /// Combines LSN range scanning with SSTable-level timestamp pruning.
+    /// `SSTables` whose timestamp range does not overlap the query window are skipped.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `SSTable` reading fails.
+    pub fn scan_with_time_bounds(
+        &self,
+        lsn: Range<u64>,
+        timestamp_ms: Range<u64>,
+    ) -> Result<Vec<Entry>, Error> {
+        let snapshot = self.snapshot();
+        snapshot.scan_with_time_bounds(lsn, timestamp_ms)
     }
 
     /// Returns an iterator over all entries in LSN order.
@@ -682,7 +694,7 @@ impl ReadSnapshot {
         }
 
         for sstable in &self.sstable_entries {
-            if lsn < sstable.min_lsn || lsn > sstable.max_lsn {
+            if lsn < sstable.lsn.start || lsn > sstable.lsn.end {
                 continue;
             }
 
@@ -710,13 +722,54 @@ impl ReadSnapshot {
     pub fn scan(&self, start_lsn: u64, end_lsn: u64) -> Result<Vec<Entry>, Error> {
         let mut result = Vec::new();
 
-        let mut iter =
-            MergeIter::new(Arc::clone(&self.memtable_entries), self.sstable_entries.clone())?;
+        let mut iter = MergeIter::new(Arc::clone(&self.memtable_entries), &self.sstable_entries)?;
         for entry in iter.by_ref() {
             if entry.lsn < start_lsn {
                 continue;
             }
             if entry.lsn > end_lsn {
+                break;
+            }
+            result.push(entry);
+        }
+
+        if let Some(e) = iter.take_error() {
+            return Err(e);
+        }
+
+        Ok(result)
+    }
+
+    /// Returns entries within an LSN range, pruning `SSTables` by timestamp bounds.
+    ///
+    /// `SSTables` whose timestamp range does not overlap `[timestamp_ms]` are skipped entirely.
+    /// Memtable entries are not pruned at this level; callers apply exact entry-level filtering.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `SSTable` reading fails.
+    pub fn scan_with_time_bounds(
+        &self,
+        lsn: Range<u64>,
+        timestamp_ms: Range<u64>,
+    ) -> Result<Vec<Entry>, Error> {
+        let pruned: Vec<_> = self
+            .sstable_entries
+            .iter()
+            .filter(|e| {
+                e.timestamp_ms.end >= timestamp_ms.start && e.timestamp_ms.start <= timestamp_ms.end
+            })
+            .cloned()
+            .collect();
+
+        let mut result = Vec::new();
+        let mut iter = MergeIter::new(Arc::clone(&self.memtable_entries), &pruned)?;
+
+        for entry in iter.by_ref() {
+            if entry.lsn < lsn.start {
+                continue;
+            }
+            if entry.lsn > lsn.end {
                 break;
             }
             result.push(entry);
@@ -735,7 +788,7 @@ impl ReadSnapshot {
     ///
     /// Returns an error if `SSTable` files cannot be opened.
     pub fn merge_iter(&self) -> Result<MergeIter, Error> {
-        MergeIter::new(Arc::clone(&self.memtable_entries), self.sstable_entries.clone())
+        MergeIter::new(Arc::clone(&self.memtable_entries), &self.sstable_entries)
     }
 }
 
@@ -758,7 +811,7 @@ pub struct MergeIter {
 impl MergeIter {
     fn new(
         memtable_entries: Arc<Vec<Entry>>,
-        sstable_entries: Vec<SstableEntry>,
+        sstable_entries: &[SstableEntry],
     ) -> Result<Self, Error> {
         let mut sources = Vec::with_capacity(1 + sstable_entries.len());
         let mut heap = BinaryHeap::new();
@@ -927,8 +980,8 @@ fn compaction_loop(
                 result.input_count,
                 result.output_path.display(),
                 result.entry_count,
-                result.min_lsn,
-                result.max_lsn,
+                result.lsn.start,
+                result.lsn.end,
                 result.removed_paths.len()
             );
         }
@@ -977,10 +1030,8 @@ fn cleanup_orphan_sstables(dir: &Path, manifest: &Manifest) -> Result<usize, Err
 
 struct ReplayReport {
     entries_replayed: usize,
-    first_lsn: Option<u64>,
-    last_lsn: Option<u64>,
-    first_timestamp_ms: Option<u64>,
-    last_timestamp_ms: Option<u64>,
+    lsn: Range<Option<u64>>,
+    timestamp_ms: Range<Option<u64>>,
     gaps: Vec<Range<u64>>,
 }
 
@@ -990,10 +1041,8 @@ fn replay_wal_from_checkpoint(
 ) -> Result<(Memtable, ReplayReport), Error> {
     let mut memtable = Memtable::new();
     let mut entries_replayed = 0;
-    let mut first_lsn = None;
-    let mut last_lsn = None;
-    let mut first_timestamp_ms = None;
-    let mut last_timestamp_ms = None;
+    let mut lsn = Range::from(None..None);
+    let mut timestamp_ms = Range::from(None..None);
     let mut gaps = Vec::new();
     let mut expected_lsn = checkpoint_lsn + 1;
 
@@ -1004,30 +1053,20 @@ fn replay_wal_from_checkpoint(
         }
 
         if entry.lsn > expected_lsn {
-            gaps.push(expected_lsn..entry.lsn);
+            gaps.push((expected_lsn..entry.lsn).into());
         }
 
-        if first_lsn.is_none() {
-            first_lsn = Some(entry.lsn);
-            first_timestamp_ms = Some(entry.timestamp_ms);
+        if lsn.start.is_none() {
+            lsn.start = Some(entry.lsn);
+            timestamp_ms.start = Some(entry.timestamp_ms);
         }
-        last_lsn = Some(entry.lsn);
-        last_timestamp_ms = Some(entry.timestamp_ms);
+        lsn.end = Some(entry.lsn);
+        timestamp_ms.end = Some(entry.timestamp_ms);
 
         memtable.insert(entry.lsn, entry.timestamp_ms, entry.data);
         entries_replayed += 1;
         expected_lsn = entry.lsn + 1;
     }
 
-    Ok((
-        memtable,
-        ReplayReport {
-            entries_replayed,
-            first_lsn,
-            last_lsn,
-            first_timestamp_ms,
-            last_timestamp_ms,
-            gaps,
-        },
-    ))
+    Ok((memtable, ReplayReport { entries_replayed, lsn, timestamp_ms, gaps }))
 }

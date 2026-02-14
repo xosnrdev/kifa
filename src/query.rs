@@ -15,6 +15,7 @@ use std::fmt;
 use std::fs::{File, remove_file};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::range::Range;
 use std::time::SystemTime;
 
 use lib_kifa::common::{atomic_rename, temp_path};
@@ -26,8 +27,8 @@ use memchr_rs::memchr;
 pub enum Error {
     Engine(engine::Error),
     Io(io::Error),
-    InvalidLsnRange { from: u64, to: u64 },
-    InvalidTimeRange { from_ms: u64, to_ms: u64 },
+    InvalidLsnRange(Range<u64>),
+    InvalidTimeRange(Range<u64>),
     TimeParseFailed(String),
 }
 
@@ -39,15 +40,15 @@ impl fmt::Display for Error {
         match self {
             Self::Engine(e) => e.fmt(f),
             Self::Io(e) => e.fmt(f),
-            Self::InvalidLsnRange { from, to } => {
-                write!(f, "invalid LSN range: {from} > {to}")
+            Self::InvalidLsnRange(range) => {
+                write!(f, "invalid LSN range: {} > {}", range.start, range.end)
             }
-            Self::InvalidTimeRange { from_ms, to_ms } => {
+            Self::InvalidTimeRange(range) => {
                 write!(
                     f,
                     "--from-time ({}) is after --to-time ({})",
-                    format_timestamp_ms(*from_ms),
-                    format_timestamp_ms(*to_ms)
+                    format_timestamp_ms(range.start),
+                    format_timestamp_ms(range.end)
                 )
             }
             Self::TimeParseFailed(s) => {
@@ -146,7 +147,7 @@ pub fn validate_time_range(from_ms: Option<u64>, to_ms: Option<u64>) -> Result<(
     if let (Some(from_ms), Some(to_ms)) = (from_ms, to_ms)
         && from_ms > to_ms
     {
-        return Err(Error::InvalidTimeRange { from_ms, to_ms });
+        return Err(Error::InvalidTimeRange((from_ms..to_ms).into()));
     }
     Ok(())
 }
@@ -156,7 +157,7 @@ pub fn run_query(options: &QueryOptions) -> Result<u64, Error> {
     let to = options.to_lsn.unwrap_or(u64::MAX);
 
     if from > to {
-        return Err(Error::InvalidLsnRange { from, to });
+        return Err(Error::InvalidLsnRange((from..to).into()));
     }
 
     let from_time = options.from_time_ms.unwrap_or_default();
@@ -168,7 +169,11 @@ pub fn run_query(options: &QueryOptions) -> Result<u64, Error> {
     let config = Config { compaction_enabled: false, ..Config::default() };
     let (engine, _) = StorageEngine::open(&options.data_dir, config)?;
     let stats = engine.stats();
-    let entries = engine.scan(from, to)?;
+    let entries = if from_time > 0 || to_time < u64::MAX {
+        engine.scan_with_time_bounds((from..to).into(), (from_time..to_time).into())?
+    } else {
+        engine.scan(from, to)?
+    };
     let scan_count = entries.len();
 
     let mut count = 0;
@@ -213,7 +218,7 @@ pub fn run_export(options: &QueryOptions) -> Result<u64, Error> {
     let to = options.to_lsn.unwrap_or(u64::MAX);
 
     if from > to {
-        return Err(Error::InvalidLsnRange { from, to });
+        return Err(Error::InvalidLsnRange((from..to).into()));
     }
 
     let from_time = options.from_time_ms.unwrap_or_default();
@@ -224,7 +229,11 @@ pub fn run_export(options: &QueryOptions) -> Result<u64, Error> {
     let config = Config { compaction_enabled: false, ..Config::default() };
     let (engine, _) = StorageEngine::open(&options.data_dir, config)?;
     let stats = engine.stats();
-    let entries = engine.scan(from, to)?;
+    let entries = if from_time > 0 || to_time < u64::MAX {
+        engine.scan_with_time_bounds((from..to).into(), (from_time..to_time).into())?
+    } else {
+        engine.scan(from, to)?
+    };
     let scan_count = entries.len();
 
     let file = File::create(&temp_path)?;
@@ -288,12 +297,8 @@ pub fn run_stats(data_dir: &Path) -> Result<Stats, Error> {
     println!("  Flush mode: {:?}", stats.wal.flush_mode);
     println!();
     println!("Health:");
-    if let (Some(first_ts), Some(last_ts)) = (report.first_timestamp_ms, report.last_timestamp_ms) {
-        println!(
-            "  Time range: {} - {}",
-            format_timestamp_ms(first_ts),
-            format_timestamp_ms(last_ts)
-        );
+    if let (Some(start), Some(end)) = (report.timestamp_ms.start, report.timestamp_ms.end) {
+        println!("  Time range: {} - {}", format_timestamp_ms(start), format_timestamp_ms(end));
     }
     if report.gaps.is_empty() {
         println!("  Gaps: none");

@@ -88,7 +88,7 @@ impl Drop for TempFileGuard<'_> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum OutputFormat {
     Text,
     Json,
@@ -96,7 +96,6 @@ pub enum OutputFormat {
     Hex,
 }
 
-#[derive(Debug, Clone)]
 pub struct QueryOptions {
     pub data_dir: PathBuf,
     pub from_lsn: Option<u64>,

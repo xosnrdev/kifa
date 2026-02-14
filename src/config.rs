@@ -61,7 +61,7 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TomlConfig {
     storage: Option<TomlStorageConfig>,
@@ -70,7 +70,7 @@ struct TomlConfig {
     sources: Option<TomlSourcesConfig>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TomlStorageConfig {
     memtable_flush_threshold_mib: Option<usize>,
@@ -78,20 +78,20 @@ struct TomlStorageConfig {
     compaction_enabled: Option<bool>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TomlWalConfig {
     flush_mode: Option<String>,
     segment_size_mib: Option<usize>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TomlIngesterConfig {
     channel_capacity: Option<usize>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TomlSourcesConfig {
     stdin: Option<bool>,
@@ -132,7 +132,6 @@ impl From<TomlConfig> for PartialConfig {
     }
 }
 
-#[derive(Debug, Clone)]
 pub struct StorageConfig {
     pub memtable_flush_threshold: usize,
     pub compaction_threshold: usize,
@@ -149,7 +148,6 @@ impl Default for StorageConfig {
     }
 }
 
-#[derive(Debug, Clone)]
 pub struct WalConfig {
     pub flush_mode: FlushMode,
     pub segment_size: usize,
@@ -161,7 +159,6 @@ impl Default for WalConfig {
     }
 }
 
-#[derive(Debug, Clone)]
 pub struct IngesterConfig {
     pub channel_capacity: usize,
     #[cfg(feature = "crash-test")]
@@ -178,7 +175,7 @@ impl Default for IngesterConfig {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[cfg_attr(test, derive(Default))]
 pub struct SourcesConfig {
     pub stdin: bool,
     pub files: Vec<PathBuf>,
@@ -186,7 +183,6 @@ pub struct SourcesConfig {
     pub udp: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
 pub struct AppConfig {
     pub data_dir: PathBuf,
     pub storage: StorageConfig,
@@ -195,7 +191,7 @@ pub struct AppConfig {
     pub sources: SourcesConfig,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct PartialConfig {
     pub data_dir: Option<PathBuf>,
     pub config_file: Option<PathBuf>,

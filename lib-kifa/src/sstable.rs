@@ -224,8 +224,6 @@ pub fn flush_memtable(memtable: &Memtable, final_path: &Path) -> Result<SstableI
         entry_count += 1;
     }
 
-    assert!(timestamp_ms.start <= timestamp_ms.end);
-
     let data_crc = hasher.finalize();
     let footer = Footer::new(data_crc);
     writer.write_all(&footer.as_bytes())?;

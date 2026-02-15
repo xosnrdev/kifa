@@ -270,8 +270,8 @@ fn print_recovery_report(report: &RecoveryReport) {
     log::info!("Recovery: {} entries replayed", report.wal_entries_replayed);
     log::info!("  SSTables: {}", report.sstable_count);
 
-    if let (Some(first), Some(last)) = (report.first_timestamp_ms, report.last_timestamp_ms) {
-        log::info!("  Time range: {} - {}", format_timestamp_ms(first), format_timestamp_ms(last));
+    if let (Some(start), Some(end)) = (report.timestamp_ms.start, report.timestamp_ms.end) {
+        log::info!("  Time range: {} - {}", format_timestamp_ms(start), format_timestamp_ms(end));
     }
 
     if report.orphan_sstables_cleaned > 0 {

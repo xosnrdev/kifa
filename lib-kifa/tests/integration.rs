@@ -1,3 +1,5 @@
+#![feature(new_range_api)]
+
 use std::collections::HashSet;
 use std::{fs, thread, time};
 
@@ -48,8 +50,8 @@ fn test_flush_creates_sstable() {
     assert!(info.is_some());
     let info = info.unwrap();
     assert_eq!(info.entry_count, 2);
-    assert_eq!(info.min_lsn, 1);
-    assert_eq!(info.max_lsn, 2);
+    assert_eq!(info.lsn.start, 1);
+    assert_eq!(info.lsn.end, 2);
     assert!(info.path.exists());
 }
 
@@ -75,8 +77,8 @@ fn test_recovery_replays_wal() {
     let (engine, report) = StorageEngine::open(dir.path(), Config::default()).unwrap();
 
     assert_eq!(report.wal_entries_replayed, 2);
-    assert_eq!(report.first_replayed_lsn, Some(1));
-    assert_eq!(report.last_replayed_lsn, Some(2));
+    assert_eq!(report.replayed_lsn.start, Some(1));
+    assert_eq!(report.replayed_lsn.end, Some(2));
     assert_eq!(engine.stats().memtable_entry_count, 2);
 }
 
@@ -96,7 +98,7 @@ fn test_recovery_skips_checkpointed_entries() {
 
     assert_eq!(report.checkpoint_lsn, 2);
     assert_eq!(report.wal_entries_replayed, 1);
-    assert_eq!(report.first_replayed_lsn, Some(3));
+    assert_eq!(report.replayed_lsn.start, Some(3));
     assert_eq!(engine.stats().memtable_entry_count, 1);
     assert_eq!(engine.stats().sstable_count, 1);
 }

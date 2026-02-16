@@ -37,10 +37,10 @@ This walkthrough takes about five minutes. At the end, Kifa is ingesting data, r
    ```
 
    ```text title="Output"
-   [1] 2026-01-31 18:30:00 UTC {"txn":"TXN-001","amount":5000,"status":"completed"}
+   2026-01-31 18:30:00 UTC {"txn":"TXN-001","amount":5000,"status":"completed"}
    ```
 
-   The `[1]` is the LSN (log sequence number). Each entry gets a monotonically increasing LSN.
+   Each entry is ordered by a monotonically increasing nanosecond timestamp.
 
 4. **Check statistics**
 
@@ -51,7 +51,7 @@ This walkthrough takes about five minutes. At the end, Kifa is ingesting data, r
    ```text title="Output"
    Storage:
      Total entries: 1
-     SSTables: 0 (checkpoint LSN: 0)
+     SSTables: 0
      Memtable: 1 entries
 
    WAL:
@@ -59,7 +59,6 @@ This walkthrough takes about five minutes. At the end, Kifa is ingesting data, r
 
    Health:
      Time range: 2026-01-31 18:30:00 UTC - 2026-01-31 18:30:00 UTC
-     Gaps: none
    ```
 
 </Steps>

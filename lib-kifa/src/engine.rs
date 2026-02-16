@@ -1,15 +1,15 @@
 //! Crash-proof storage engine for append-only log workloads.
 //!
-//! The engine follows the LSM-tree pattern but orders entries by LSN rather than key. A simple
-//! `Vec` replaces the sorted memtable because append-only workloads never require key lookups.
-//! This design targets POS and mobile money systems where durability matters more than random
-//! access. Emergency mode flushes the memtable immediately when power loss is imminent.
+//! The engine follows the LSM-tree pattern but orders entries by monotonic nanosecond timestamp
+//! rather than key. A simple `Vec` replaces the sorted memtable because append-only workloads
+//! never require key lookups. This design targets POS and mobile money systems where durability
+//! matters more than random access. Emergency mode flushes the memtable immediately when power
+//! loss is imminent.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
-use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{self, Arc, Condvar, Mutex};
@@ -139,10 +139,6 @@ impl Default for Config {
 /// if report.wal_entries_replayed > 0 {
 ///     eprintln!("Recovered {} entries from crash", report.wal_entries_replayed);
 /// }
-///
-/// if !report.gaps.is_empty() {
-///     eprintln!("Warning: {} gaps in LSN sequence", report.gaps.len());
-/// }
 /// ```
 #[derive(Debug)]
 pub struct RecoveryReport {
@@ -151,27 +147,16 @@ pub struct RecoveryReport {
     /// Zero after a clean shutdown; nonzero after crash recovery.
     pub wal_entries_replayed: usize,
 
-    /// LSN up to which data is persisted in `SSTables`.
+    /// Timestamp up to which data is persisted in `SSTables`.
     ///
-    /// Entries with LSN <= this value are safely on disk.
-    pub checkpoint_lsn: u64,
+    /// Entries with `timestamp_ns` <= this value are safely on disk.
+    pub checkpoint_timestamp_ns: u64,
 
-    /// First LSN replayed from WAL, if any.
-    pub first_replayed_lsn: Option<u64>,
+    /// Earliest timestamp replayed from WAL, if any.
+    pub first_replayed_timestamp_ns: Option<u64>,
 
-    /// Last LSN replayed from WAL, if any.
-    pub last_replayed_lsn: Option<u64>,
-
-    /// Timestamp of first replayed entry (milliseconds since Unix epoch).
-    pub first_timestamp_ms: Option<u64>,
-
-    /// Timestamp of last replayed entry (milliseconds since Unix epoch).
-    pub last_timestamp_ms: Option<u64>,
-
-    /// Gaps in the LSN sequence (indicates data loss).
-    ///
-    /// Each range represents missing LSNs. Empty if no gaps detected.
-    pub gaps: Vec<Range<u64>>,
+    /// Latest timestamp replayed from WAL, if any.
+    pub last_replayed_timestamp_ns: Option<u64>,
 
     /// Number of `SSTables` found on disk.
     pub sstable_count: usize,
@@ -192,7 +177,7 @@ pub struct RecoveryReport {
 /// Useful for monitoring and debugging. All values are point-in-time
 /// snapshots and may change immediately after reading.
 pub struct Stats {
-    /// WAL statistics (LSN counters, flush mode).
+    /// WAL statistics (timestamp counters, flush mode).
     pub wal: WalStats,
 
     /// Current memtable size in bytes.
@@ -204,10 +189,10 @@ pub struct Stats {
     /// Number of `SSTables` on disk.
     pub sstable_count: usize,
 
-    /// Highest LSN persisted to `SSTable`s.
+    /// Highest timestamp persisted to `SSTable`s.
     ///
-    /// Entries with LSN <= this are durable even without WAL.
-    pub checkpoint_lsn: u64,
+    /// Entries with `timestamp_ns` <= this are durable even without WAL.
+    pub checkpoint_timestamp_ns: u64,
 }
 
 struct Inner {
@@ -259,11 +244,11 @@ struct CompactionState {
 /// engine.set_flush_mode(FlushMode::Cautious);
 ///
 /// // The append call blocks until the entry is durable on disk.
-/// let lsn = engine.append(b"TXN-001: payment received").unwrap();
-/// println!("Stored with LSN {lsn}");
+/// let ts = engine.append(b"TXN-001: payment received").unwrap();
+/// println!("Stored with timestamp {ts}");
 ///
-/// // Retrieves the entry by its assigned LSN.
-/// if let Some(entry) = engine.get(lsn).unwrap() {
+/// // Retrieves the entry by its assigned timestamp.
+/// if let Some(entry) = engine.get(ts).unwrap() {
 ///     println!("Data: {}", String::from_utf8_lossy(&entry.data));
 /// }
 /// ```
@@ -326,8 +311,8 @@ impl StorageEngine {
 
         let wal = Wal::open(dir)?;
 
-        let checkpoint_lsn = manifest.checkpoint_lsn();
-        let (memtable, replay_report) = replay_wal_from_checkpoint(dir, checkpoint_lsn)?;
+        let checkpoint_timestamp_ns = manifest.checkpoint_timestamp_ns();
+        let (memtable, replay_report) = replay_wal_from_checkpoint(dir, checkpoint_timestamp_ns)?;
 
         let trigger = Arc::new((Mutex::new(false), Condvar::new()));
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -361,12 +346,9 @@ impl StorageEngine {
             let inner = engine.inner.lock().unwrap_or_else(sync::PoisonError::into_inner);
             RecoveryReport {
                 wal_entries_replayed: replay_report.entries_replayed,
-                checkpoint_lsn,
-                first_replayed_lsn: replay_report.first_lsn,
-                last_replayed_lsn: replay_report.last_lsn,
-                first_timestamp_ms: replay_report.first_timestamp_ms,
-                last_timestamp_ms: replay_report.last_timestamp_ms,
-                gaps: replay_report.gaps,
+                checkpoint_timestamp_ns,
+                first_replayed_timestamp_ns: replay_report.first_timestamp_ns,
+                last_replayed_timestamp_ns: replay_report.last_timestamp_ns,
                 sstable_count: inner.manifest.sstable_count(),
                 temp_files_cleaned,
                 orphan_sstables_cleaned,
@@ -376,7 +358,7 @@ impl StorageEngine {
         Ok((engine, report))
     }
 
-    /// Appends data to the log and returns its sequence number.
+    /// Appends data to the log and returns its timestamp.
     ///
     /// The entry is written to the WAL and added to the memtable. Durability
     /// depends on the current [`FlushMode`]:
@@ -390,8 +372,8 @@ impl StorageEngine {
     ///
     /// # Returns
     ///
-    /// The log sequence number (LSN) assigned to this entry. LSNs are
-    /// monotonically increasing and unique.
+    /// The monotonic nanosecond timestamp assigned to this entry. Timestamps are
+    /// strictly increasing and unique.
     ///
     /// # Errors
     ///
@@ -404,8 +386,8 @@ impl StorageEngine {
     pub fn append(&self, data: &[u8]) -> Result<u64, Error> {
         let mut inner = self.inner.lock().unwrap_or_else(sync::PoisonError::into_inner);
 
-        let (lsn, timestamp_ms) = self.wal.append(data)?;
-        inner.memtable.insert(lsn, timestamp_ms, Arc::from(data));
+        let timestamp_ns = self.wal.append(data)?;
+        inner.memtable.insert(timestamp_ns, Arc::from(data));
 
         if inner.memtable.size_bytes() >= self.config.memtable_flush_threshold {
             // Releases the lock before flushing to avoid deadlock.
@@ -413,7 +395,7 @@ impl StorageEngine {
             self.flush_internal()?;
         }
 
-        Ok(lsn)
+        Ok(timestamp_ns)
     }
 
     /// Forces the memtable to be flushed to an `SSTable`.
@@ -485,7 +467,7 @@ impl StorageEngine {
             memtable_size_bytes: inner.memtable.size_bytes(),
             memtable_entry_count: inner.memtable.len(),
             sstable_count: inner.manifest.sstable_count(),
-            checkpoint_lsn: inner.manifest.checkpoint_lsn(),
+            checkpoint_timestamp_ns: inner.manifest.checkpoint_timestamp_ns(),
         }
     }
 
@@ -506,9 +488,9 @@ impl StorageEngine {
         // Freezing prevents new inserts while the memtable is being flushed to disk.
         inner.memtable.freeze();
 
-        let min_lsn = inner.memtable.iter().next().map_or(0, |e| e.lsn);
-        let max_lsn = inner.memtable.last_lsn();
-        let sstable_path = self.dir.join(sstable::sstable_name(min_lsn, max_lsn));
+        let min_ts = inner.memtable.iter().next().map_or(0, |e| e.timestamp_ns);
+        let max_ts = inner.memtable.last_timestamp_ns();
+        let sstable_path = self.dir.join(sstable::sstable_name(min_ts, max_ts));
 
         let info = match sstable::flush_memtable(&inner.memtable, &sstable_path) {
             Ok(info) => info,
@@ -518,8 +500,11 @@ impl StorageEngine {
             }
         };
 
-        let manifest_result =
-            inner.manifest.register_sstable(info.path.clone(), info.min_lsn, info.max_lsn);
+        let manifest_result = inner.manifest.register_sstable(
+            info.path.clone(),
+            info.min_timestamp_ns,
+            info.max_timestamp_ns,
+        );
 
         if let Err(e) = manifest_result {
             let _ = fs::remove_file(&sstable_path);
@@ -533,17 +518,16 @@ impl StorageEngine {
             return Err(e.into());
         }
 
-        // Entries up to checkpoint_lsn are now durable in SSTables and no longer need WAL replay.
-        let checkpoint_lsn = inner.manifest.checkpoint_lsn();
-        let _ = self.wal.truncate_log(checkpoint_lsn);
+        let checkpoint_timestamp_ns = inner.manifest.checkpoint_timestamp_ns();
+        let _ = self.wal.truncate_log(checkpoint_timestamp_ns);
 
         inner.memtable = Memtable::new();
 
         log::info!(
-            "Memtable flushed: {} entries, LSN {}-{}, path {}",
+            "Memtable flushed: {} entries, timestamp {}-{}, path {}",
             info.entry_count,
-            info.min_lsn,
-            info.max_lsn,
+            info.min_timestamp_ns,
+            info.max_timestamp_ns,
             info.path.display()
         );
 
@@ -560,38 +544,38 @@ impl StorageEngine {
         }
     }
 
-    /// Retrieves an entry by its log sequence number.
+    /// Retrieves an entry by its nanosecond timestamp.
     ///
     /// Searches the memtable first, then `SSTables`. Returns `None` if no
-    /// entry exists with the given LSN.
+    /// entry exists with the given timestamp.
     ///
     /// # Errors
     ///
     /// Returns an error if `SSTable` reading fails.
-    pub fn get(&self, lsn: u64) -> Result<Option<Entry>, Error> {
+    pub fn get(&self, timestamp_ns: u64) -> Result<Option<Entry>, Error> {
         let snapshot = self.snapshot();
-        snapshot.get(lsn)
+        snapshot.get(timestamp_ns)
     }
 
-    /// Returns entries within an LSN range (inclusive).
+    /// Returns entries within a timestamp range (inclusive).
     ///
-    /// Entries are returned in LSN order. Efficient for range queries
+    /// Entries are returned in timestamp order. Efficient for range queries
     /// across both memtable and `SSTables`.
     ///
     /// # Arguments
     ///
-    /// * `start_lsn` - First LSN to include (inclusive)
-    /// * `end_lsn` - Last LSN to include (inclusive)
+    /// * `start_ns` - First timestamp to include (inclusive)
+    /// * `end_ns` - Last timestamp to include (inclusive)
     ///
     /// # Errors
     ///
     /// Returns an error if `SSTable` reading fails.
-    pub fn scan(&self, start_lsn: u64, end_lsn: u64) -> Result<Vec<Entry>, Error> {
+    pub fn scan(&self, start_ns: u64, end_ns: u64) -> Result<Vec<Entry>, Error> {
         let snapshot = self.snapshot();
-        snapshot.scan(start_lsn, end_lsn)
+        snapshot.scan(start_ns, end_ns)
     }
 
-    /// Returns an iterator over all entries in LSN order.
+    /// Returns an iterator over all entries in timestamp order.
     ///
     /// Merges entries from the memtable and all `SSTables`. Use this for
     /// full scans or exports.
@@ -621,9 +605,9 @@ impl StorageEngine {
     /// // The snapshot captures state at creation time; later writes are invisible.
     /// engine.append(b"new data").unwrap();
     ///
-    /// let entries = snapshot.scan(1, u64::MAX).unwrap();
+    /// let entries = snapshot.scan(0, u64::MAX).unwrap();
     /// for entry in &entries {
-    ///     println!("[{}] {:?}", entry.lsn, entry.data);
+    ///     println!("[{}] {:?}", entry.timestamp_ns, entry.data);
     /// }
     /// ```
     #[must_use]
@@ -633,7 +617,7 @@ impl StorageEngine {
         let memtable_entries: Vec<_> = inner
             .memtable
             .iter()
-            .map(|e| Entry { lsn: e.lsn, timestamp_ms: e.timestamp_ms, data: e.data.clone() })
+            .map(|e| Entry { timestamp_ns: e.timestamp_ns, data: e.data.clone() })
             .collect();
 
         let sstable_entries = inner.manifest.sstables().to_vec();
@@ -663,33 +647,32 @@ pub struct ReadSnapshot {
 }
 
 impl ReadSnapshot {
-    /// Retrieves an entry by its log sequence number.
+    /// Retrieves an entry by its nanosecond timestamp.
     ///
-    /// Returns `None` if no entry with the given LSN exists in this snapshot.
+    /// Returns `None` if no entry with the given timestamp exists in this snapshot.
     ///
     /// # Errors
     ///
     /// Returns an error if `SSTable` reading fails.
-    pub fn get(&self, lsn: u64) -> Result<Option<Entry>, Error> {
+    pub fn get(&self, timestamp_ns: u64) -> Result<Option<Entry>, Error> {
         for entry in self.memtable_entries.iter() {
-            if entry.lsn == lsn {
+            if entry.timestamp_ns == timestamp_ns {
                 return Ok(Some(Entry {
-                    lsn: entry.lsn,
-                    timestamp_ms: entry.timestamp_ms,
+                    timestamp_ns: entry.timestamp_ns,
                     data: entry.data.clone(),
                 }));
             }
         }
 
         for sstable in &self.sstable_entries {
-            if lsn < sstable.min_lsn || lsn > sstable.max_lsn {
+            if timestamp_ns < sstable.min_timestamp_ns || timestamp_ns > sstable.max_timestamp_ns {
                 continue;
             }
 
             let reader = SstableReader::open(&sstable.path)?;
             let mut iter = reader.into_iter();
             for entry in iter.by_ref() {
-                if entry.lsn == lsn {
+                if entry.timestamp_ns == timestamp_ns {
                     return Ok(Some(entry));
                 }
             }
@@ -702,21 +685,21 @@ impl ReadSnapshot {
         Ok(None)
     }
 
-    /// Returns entries within an LSN range (inclusive).
+    /// Returns entries within a timestamp range (inclusive).
     ///
     /// # Errors
     ///
     /// Returns an error if `SSTable` reading fails.
-    pub fn scan(&self, start_lsn: u64, end_lsn: u64) -> Result<Vec<Entry>, Error> {
+    pub fn scan(&self, start_ns: u64, end_ns: u64) -> Result<Vec<Entry>, Error> {
         let mut result = Vec::new();
 
         let mut iter =
             MergeIter::new(Arc::clone(&self.memtable_entries), self.sstable_entries.clone())?;
         for entry in iter.by_ref() {
-            if entry.lsn < start_lsn {
+            if entry.timestamp_ns < start_ns {
                 continue;
             }
-            if entry.lsn > end_lsn {
+            if entry.timestamp_ns > end_ns {
                 break;
             }
             result.push(entry);
@@ -729,7 +712,7 @@ impl ReadSnapshot {
         Ok(result)
     }
 
-    /// Returns an iterator over all entries in LSN order.
+    /// Returns an iterator over all entries in timestamp order.
     ///
     /// # Errors
     ///
@@ -744,7 +727,7 @@ enum Source {
     Sstable(SstableIter),
 }
 
-/// Iterator that merges entries from memtable and `SSTables` in LSN order.
+/// Iterator that merges entries from memtable and `SSTables` in timestamp order.
 ///
 /// Uses a min-heap to efficiently merge multiple sorted sources. If an
 /// I/O error occurs during iteration, the iterator stops and the error
@@ -766,8 +749,7 @@ impl MergeIter {
         if !memtable_entries.is_empty() {
             let first = &memtable_entries[0];
             heap.push(Reverse(HeapEntry {
-                lsn: first.lsn,
-                timestamp_ms: first.timestamp_ms,
+                timestamp_ns: first.timestamp_ns,
                 data: first.data.clone(),
                 source_idx: sources.len(),
             }));
@@ -781,8 +763,7 @@ impl MergeIter {
             if let Some(entry) = iter.next() {
                 let source_idx = sources.len();
                 heap.push(Reverse(HeapEntry {
-                    lsn: entry.lsn,
-                    timestamp_ms: entry.timestamp_ms,
+                    timestamp_ns: entry.timestamp_ns,
                     data: entry.data,
                     source_idx,
                 }));
@@ -806,8 +787,7 @@ impl MergeIter {
         let next_entry = match &mut self.sources[source_idx] {
             Source::Memtable { entries, pos } => {
                 let entry = entries.get(*pos).map(|e| HeapEntry {
-                    lsn: e.lsn,
-                    timestamp_ms: e.timestamp_ms,
+                    timestamp_ns: e.timestamp_ns,
                     data: e.data.clone(),
                     source_idx,
                 });
@@ -816,12 +796,7 @@ impl MergeIter {
             }
             Source::Sstable(iter) => {
                 if let Some(e) = iter.next() {
-                    Some(HeapEntry {
-                        lsn: e.lsn,
-                        timestamp_ms: e.timestamp_ms,
-                        data: e.data,
-                        source_idx,
-                    })
+                    Some(HeapEntry { timestamp_ns: e.timestamp_ns, data: e.data, source_idx })
                 } else {
                     if let Some(e) = iter.take_error() {
                         self.error = Some(e.into());
@@ -849,7 +824,7 @@ impl Iterator for MergeIter {
 
         self.advance_source(entry.source_idx);
 
-        Some(Entry { lsn: entry.lsn, timestamp_ms: entry.timestamp_ms, data: entry.data })
+        Some(Entry { timestamp_ns: entry.timestamp_ns, data: entry.data })
     }
 }
 
@@ -923,12 +898,12 @@ fn compaction_loop(
         let mut guard = inner.lock().unwrap_or_else(sync::PoisonError::into_inner);
         if let Ok(result) = commit_compaction(&mut guard.manifest, output) {
             log::info!(
-                "Compacted {} SSTables into {}: {} entries, LSN {}-{}, removed {} files",
+                "Compacted {} SSTables into {}: {} entries, timestamp {}-{}, removed {} files",
                 result.input_count,
                 result.output_path.display(),
                 result.entry_count,
-                result.min_lsn,
-                result.max_lsn,
+                result.min_timestamp_ns,
+                result.max_timestamp_ns,
                 result.removed_paths.len()
             );
         }
@@ -977,57 +952,32 @@ fn cleanup_orphan_sstables(dir: &Path, manifest: &Manifest) -> Result<usize, Err
 
 struct ReplayReport {
     entries_replayed: usize,
-    first_lsn: Option<u64>,
-    last_lsn: Option<u64>,
-    first_timestamp_ms: Option<u64>,
-    last_timestamp_ms: Option<u64>,
-    gaps: Vec<Range<u64>>,
+    first_timestamp_ns: Option<u64>,
+    last_timestamp_ns: Option<u64>,
 }
 
 fn replay_wal_from_checkpoint(
     dir: &Path,
-    checkpoint_lsn: u64,
+    checkpoint_timestamp_ns: u64,
 ) -> Result<(Memtable, ReplayReport), Error> {
     let mut memtable = Memtable::new();
     let mut entries_replayed = 0;
-    let mut first_lsn = None;
-    let mut last_lsn = None;
-    let mut first_timestamp_ms = None;
-    let mut last_timestamp_ms = None;
-    let mut gaps = Vec::new();
-    let mut expected_lsn = checkpoint_lsn + 1;
+    let mut first_timestamp_ns = None;
+    let mut last_timestamp_ns = None;
 
     for entry in Wal::entries(dir)? {
-        // Entries at or below checkpoint_lsn are already persisted in SSTables.
-        if entry.lsn <= checkpoint_lsn {
+        if entry.timestamp_ns <= checkpoint_timestamp_ns {
             continue;
         }
 
-        if entry.lsn > expected_lsn {
-            gaps.push(expected_lsn..entry.lsn);
+        if first_timestamp_ns.is_none() {
+            first_timestamp_ns = Some(entry.timestamp_ns);
         }
+        last_timestamp_ns = Some(entry.timestamp_ns);
 
-        if first_lsn.is_none() {
-            first_lsn = Some(entry.lsn);
-            first_timestamp_ms = Some(entry.timestamp_ms);
-        }
-        last_lsn = Some(entry.lsn);
-        last_timestamp_ms = Some(entry.timestamp_ms);
-
-        memtable.insert(entry.lsn, entry.timestamp_ms, entry.data);
+        memtable.insert(entry.timestamp_ns, entry.data);
         entries_replayed += 1;
-        expected_lsn = entry.lsn + 1;
     }
 
-    Ok((
-        memtable,
-        ReplayReport {
-            entries_replayed,
-            first_lsn,
-            last_lsn,
-            first_timestamp_ms,
-            last_timestamp_ms,
-            gaps,
-        },
-    ))
+    Ok((memtable, ReplayReport { entries_replayed, first_timestamp_ns, last_timestamp_ns }))
 }

@@ -29,7 +29,7 @@ Built for POS terminals and mobile money agents operating where power is unrelia
 | Unreliable power   | Configurable fsync: batched, per-write, or emergency mode |
 | Limited resources  | Single static binary, minimal memory footprint            |
 | Offline operation  | No network dependencies, local storage only               |
-| Audit requirements | Immutable append-only log with LSN ordering               |
+| Audit requirements | Immutable append-only log with timestamp ordering         |
 
 ## Quick Start
 

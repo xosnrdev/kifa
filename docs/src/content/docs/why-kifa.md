@@ -14,7 +14,7 @@ When a payment terminal loses power mid-transaction, Kifa keeps the data written
 | Unreliable power   | Configurable fsync modes, from batched to per-write durability |
 | Limited resources  | Single static binary, minimal memory footprint                 |
 | Offline operation  | No network dependencies, everything stored locally             |
-| Audit requirements | Immutable append-only log with LSN ordering                    |
+| Audit requirements | Immutable append-only log with timestamp ordering              |
 
 ## What Makes It Different
 

@@ -3,7 +3,8 @@
 //! Unlike `LevelDB` or `RocksDB`, which use append-only logs of version edits, this manifest
 //! rewrites the full state on each save. The simpler approach works here because updates are
 //! infrequent (only on memtable flush or compaction) and the file remains small. The checkpoint
-//! LSN indicates the highest LSN durably flushed to `SSTables`, allowing safe WAL truncation.
+//! timestamp indicates the highest timestamp durably flushed to `SSTables`, allowing safe WAL
+//! truncation.
 
 use std::fs::{File, OpenOptions, remove_file};
 use std::io::{self, BufReader, BufWriter, Read, Write};
@@ -66,8 +67,8 @@ impl std::error::Error for Error {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SstableEntry {
     pub path: PathBuf,
-    pub min_lsn: u64,
-    pub max_lsn: u64,
+    pub min_timestamp_ns: u64,
+    pub max_timestamp_ns: u64,
 }
 
 #[repr(C)]
@@ -75,7 +76,7 @@ struct Header {
     magic: u64,
     version: u32,
     sstable_count: u32,
-    checkpoint_lsn: u64,
+    checkpoint_timestamp_ns: u64,
 }
 
 impl Header {
@@ -84,7 +85,7 @@ impl Header {
         buf[0..8].copy_from_slice(&self.magic.to_le_bytes());
         buf[8..12].copy_from_slice(&self.version.to_le_bytes());
         buf[12..16].copy_from_slice(&self.sstable_count.to_le_bytes());
-        buf[16..24].copy_from_slice(&self.checkpoint_lsn.to_le_bytes());
+        buf[16..24].copy_from_slice(&self.checkpoint_timestamp_ns.to_le_bytes());
         buf
     }
 
@@ -95,7 +96,7 @@ impl Header {
             ]),
             version: u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
             sstable_count: u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]),
-            checkpoint_lsn: u64::from_le_bytes([
+            checkpoint_timestamp_ns: u64::from_le_bytes([
                 bytes[16], bytes[17], bytes[18], bytes[19], bytes[20], bytes[21], bytes[22],
                 bytes[23],
             ]),
@@ -154,14 +155,14 @@ impl Footer {
 #[cfg_attr(test, derive(Debug))]
 pub struct Manifest {
     path: PathBuf,
-    checkpoint_lsn: u64,
+    checkpoint_timestamp_ns: u64,
     sstables: Vec<SstableEntry>,
 }
 
 impl Manifest {
     #[must_use]
     pub const fn new(path: PathBuf) -> Self {
-        Self { path, checkpoint_lsn: 0, sstables: Vec::new() }
+        Self { path, checkpoint_timestamp_ns: 0, sstables: Vec::new() }
     }
 
     pub fn load(path: &Path, validate_sstables: bool) -> Result<Self, Error> {
@@ -179,20 +180,20 @@ impl Manifest {
         let mut sstables = Vec::with_capacity(header.sstable_count as usize);
 
         for _ in 0..header.sstable_count {
-            let mut min_lsn_bytes = [0; 8];
-            let mut max_lsn_bytes = [0; 8];
+            let mut min_ts_bytes = [0; 8];
+            let mut max_ts_bytes = [0; 8];
             let mut path_len_bytes = [0; 2];
 
-            reader.read_exact(&mut min_lsn_bytes)?;
-            reader.read_exact(&mut max_lsn_bytes)?;
+            reader.read_exact(&mut min_ts_bytes)?;
+            reader.read_exact(&mut max_ts_bytes)?;
             reader.read_exact(&mut path_len_bytes)?;
 
-            hasher.update(&min_lsn_bytes);
-            hasher.update(&max_lsn_bytes);
+            hasher.update(&min_ts_bytes);
+            hasher.update(&max_ts_bytes);
             hasher.update(&path_len_bytes);
 
-            let min_lsn = u64::from_le_bytes(min_lsn_bytes);
-            let max_lsn = u64::from_le_bytes(max_lsn_bytes);
+            let min_timestamp_ns = u64::from_le_bytes(min_ts_bytes);
+            let max_timestamp_ns = u64::from_le_bytes(max_ts_bytes);
             let path_len = u16::from_le_bytes(path_len_bytes) as usize;
 
             if path_len > MAX_PATH_LEN {
@@ -210,7 +211,7 @@ impl Manifest {
                 return Err(Error::MissingSstable { path: sstable_path });
             }
 
-            sstables.push(SstableEntry { path: sstable_path, min_lsn, max_lsn });
+            sstables.push(SstableEntry { path: sstable_path, min_timestamp_ns, max_timestamp_ns });
         }
 
         let computed_crc = hasher.finalize();
@@ -220,7 +221,11 @@ impl Manifest {
         let footer = Footer::from_bytes(footer_bytes);
         footer.validate(computed_crc)?;
 
-        Ok(Self { path: path.to_path_buf(), checkpoint_lsn: header.checkpoint_lsn, sstables })
+        Ok(Self {
+            path: path.to_path_buf(),
+            checkpoint_timestamp_ns: header.checkpoint_timestamp_ns,
+            sstables,
+        })
     }
 
     pub fn save(&self) -> Result<(), Error> {
@@ -234,7 +239,7 @@ impl Manifest {
             magic: MAGIC_HEADER,
             version: VERSION,
             sstable_count: self.sstables.len() as u32,
-            checkpoint_lsn: self.checkpoint_lsn,
+            checkpoint_timestamp_ns: self.checkpoint_timestamp_ns,
         };
 
         let header_bytes = header.as_bytes();
@@ -249,17 +254,17 @@ impl Manifest {
                 return Err(Error::PathTooLong { len: path_bytes.len(), max: MAX_PATH_LEN });
             }
 
-            let min_lsn_bytes = entry.min_lsn.to_le_bytes();
-            let max_lsn_bytes = entry.max_lsn.to_le_bytes();
+            let min_ts_bytes = entry.min_timestamp_ns.to_le_bytes();
+            let max_ts_bytes = entry.max_timestamp_ns.to_le_bytes();
             let path_len_bytes = (path_bytes.len() as u16).to_le_bytes();
 
-            hasher.update(&min_lsn_bytes);
-            hasher.update(&max_lsn_bytes);
+            hasher.update(&min_ts_bytes);
+            hasher.update(&max_ts_bytes);
             hasher.update(&path_len_bytes);
             hasher.update(path_bytes);
 
-            writer.write_all(&min_lsn_bytes)?;
-            writer.write_all(&max_lsn_bytes)?;
+            writer.write_all(&min_ts_bytes)?;
+            writer.write_all(&max_ts_bytes)?;
             writer.write_all(&path_len_bytes)?;
             writer.write_all(path_bytes)?;
         }
@@ -279,24 +284,22 @@ impl Manifest {
     pub fn register_sstable(
         &mut self,
         path: PathBuf,
-        min_lsn: u64,
-        max_lsn: u64,
+        min_timestamp_ns: u64,
+        max_timestamp_ns: u64,
     ) -> Result<(), Error> {
         if self.sstables.iter().any(|e| e.path == path) {
             return Err(Error::DuplicateSstable { path });
         }
 
-        // Registering an SSTable with max_lsn below the checkpoint would allow WAL truncation
-        // past LSNs that might not exist in any SSTable, causing data loss on recovery.
-        if max_lsn < self.checkpoint_lsn {
+        if max_timestamp_ns < self.checkpoint_timestamp_ns {
             return Err(Error::CheckpointRegression {
-                current: self.checkpoint_lsn,
-                attempted: max_lsn,
+                current: self.checkpoint_timestamp_ns,
+                attempted: max_timestamp_ns,
             });
         }
 
-        self.sstables.push(SstableEntry { path, min_lsn, max_lsn });
-        self.checkpoint_lsn = self.checkpoint_lsn.max(max_lsn);
+        self.sstables.push(SstableEntry { path, min_timestamp_ns, max_timestamp_ns });
+        self.checkpoint_timestamp_ns = self.checkpoint_timestamp_ns.max(max_timestamp_ns);
 
         Ok(())
     }
@@ -306,8 +309,8 @@ impl Manifest {
     }
 
     #[must_use]
-    pub const fn checkpoint_lsn(&self) -> u64 {
-        self.checkpoint_lsn
+    pub const fn checkpoint_timestamp_ns(&self) -> u64 {
+        self.checkpoint_timestamp_ns
     }
 
     #[must_use]
@@ -355,7 +358,7 @@ mod tests {
             magic: MAGIC_HEADER,
             version: VERSION,
             sstable_count: 5,
-            checkpoint_lsn: 12345,
+            checkpoint_timestamp_ns: 12345,
         };
 
         let bytes = header.as_bytes();
@@ -364,7 +367,7 @@ mod tests {
         assert_eq!(restored.magic, MAGIC_HEADER);
         assert_eq!(restored.version, VERSION);
         assert_eq!(restored.sstable_count, 5);
-        assert_eq!(restored.checkpoint_lsn, 12345);
+        assert_eq!(restored.checkpoint_timestamp_ns, 12345);
     }
 
     #[test]
@@ -379,15 +382,20 @@ mod tests {
 
     #[test]
     fn test_header_validation_invalid_magic() {
-        let header = Header { magic: 0xBAD, version: VERSION, sstable_count: 0, checkpoint_lsn: 0 };
+        let header =
+            Header { magic: 0xBAD, version: VERSION, sstable_count: 0, checkpoint_timestamp_ns: 0 };
 
         assert!(matches!(header.validate(), Err(Error::InvalidMagic)));
     }
 
     #[test]
     fn test_header_validation_unsupported_version() {
-        let header =
-            Header { magic: MAGIC_HEADER, version: 99, sstable_count: 0, checkpoint_lsn: 0 };
+        let header = Header {
+            magic: MAGIC_HEADER,
+            version: 99,
+            sstable_count: 0,
+            checkpoint_timestamp_ns: 0,
+        };
 
         assert!(matches!(
             header.validate(),
@@ -399,7 +407,7 @@ mod tests {
     fn test_new_manifest_empty() {
         let manifest = Manifest::new(PathBuf::from("/tmp/MANIFEST"));
 
-        assert_eq!(manifest.checkpoint_lsn(), 0);
+        assert_eq!(manifest.checkpoint_timestamp_ns(), 0);
         assert_eq!(manifest.sstable_count(), 0);
         assert!(manifest.sstables().is_empty());
     }
@@ -408,34 +416,34 @@ mod tests {
     fn test_register_sstable() {
         let mut manifest = Manifest::new(PathBuf::from("/tmp/MANIFEST"));
 
-        manifest.register_sstable(PathBuf::from("/data/001.sst"), 1, 100).unwrap();
+        manifest.register_sstable(PathBuf::from("/data/001.sst"), 1000, 100_000).unwrap();
 
         assert_eq!(manifest.sstable_count(), 1);
-        assert_eq!(manifest.checkpoint_lsn(), 100);
+        assert_eq!(manifest.checkpoint_timestamp_ns(), 100_000);
         assert_eq!(manifest.sstables()[0].path, PathBuf::from("/data/001.sst"));
-        assert_eq!(manifest.sstables()[0].min_lsn, 1);
-        assert_eq!(manifest.sstables()[0].max_lsn, 100);
+        assert_eq!(manifest.sstables()[0].min_timestamp_ns, 1000);
+        assert_eq!(manifest.sstables()[0].max_timestamp_ns, 100_000);
     }
 
     #[test]
     fn test_register_multiple_sstables_updates_checkpoint() {
         let mut manifest = Manifest::new(PathBuf::from("/tmp/MANIFEST"));
 
-        manifest.register_sstable(PathBuf::from("/data/001.sst"), 1, 100).unwrap();
-        manifest.register_sstable(PathBuf::from("/data/002.sst"), 101, 200).unwrap();
-        manifest.register_sstable(PathBuf::from("/data/003.sst"), 201, 300).unwrap();
+        manifest.register_sstable(PathBuf::from("/data/001.sst"), 1000, 100_000).unwrap();
+        manifest.register_sstable(PathBuf::from("/data/002.sst"), 100_001, 200_000).unwrap();
+        manifest.register_sstable(PathBuf::from("/data/003.sst"), 200_001, 300_000).unwrap();
 
         assert_eq!(manifest.sstable_count(), 3);
-        assert_eq!(manifest.checkpoint_lsn(), 300);
+        assert_eq!(manifest.checkpoint_timestamp_ns(), 300_000);
     }
 
     #[test]
     fn test_register_duplicate_sstable_fails() {
         let mut manifest = Manifest::new(PathBuf::from("/tmp/MANIFEST"));
 
-        manifest.register_sstable(PathBuf::from("/data/001.sst"), 1, 100).unwrap();
+        manifest.register_sstable(PathBuf::from("/data/001.sst"), 1000, 100_000).unwrap();
 
-        let result = manifest.register_sstable(PathBuf::from("/data/001.sst"), 101, 200);
+        let result = manifest.register_sstable(PathBuf::from("/data/001.sst"), 100_001, 200_000);
 
         assert!(
             matches!(result, Err(Error::DuplicateSstable { ref path }) if path.as_path() == Path::new("/data/001.sst"))
@@ -446,11 +454,14 @@ mod tests {
     fn test_checkpoint_regression_fails() {
         let mut manifest = Manifest::new(PathBuf::from("/tmp/MANIFEST"));
 
-        manifest.register_sstable(PathBuf::from("/data/001.sst"), 1, 100).unwrap();
+        manifest.register_sstable(PathBuf::from("/data/001.sst"), 1000, 100_000).unwrap();
 
-        let result = manifest.register_sstable(PathBuf::from("/data/002.sst"), 50, 80);
+        let result = manifest.register_sstable(PathBuf::from("/data/002.sst"), 50_000, 80_000);
 
-        assert!(matches!(result, Err(Error::CheckpointRegression { current: 100, attempted: 80 })));
+        assert!(matches!(
+            result,
+            Err(Error::CheckpointRegression { current: 100_000, attempted: 80_000 })
+        ));
     }
 
     #[test]
@@ -463,7 +474,7 @@ mod tests {
 
         let loaded = Manifest::load(&path, false).unwrap();
 
-        assert_eq!(loaded.checkpoint_lsn(), 0);
+        assert_eq!(loaded.checkpoint_timestamp_ns(), 0);
         assert_eq!(loaded.sstable_count(), 0);
     }
 
@@ -478,13 +489,13 @@ mod tests {
         fs::write(&sst2, b"dummy").unwrap();
 
         let mut manifest = Manifest::new(path.clone());
-        manifest.register_sstable(sst1.clone(), 1, 100).unwrap();
-        manifest.register_sstable(sst2.clone(), 101, 200).unwrap();
+        manifest.register_sstable(sst1.clone(), 1000, 100_000).unwrap();
+        manifest.register_sstable(sst2.clone(), 100_001, 200_000).unwrap();
         manifest.save().unwrap();
 
         let loaded = Manifest::load(&path, true).unwrap();
 
-        assert_eq!(loaded.checkpoint_lsn(), 200);
+        assert_eq!(loaded.checkpoint_timestamp_ns(), 200_000);
         assert_eq!(loaded.sstable_count(), 2);
         assert_eq!(loaded.sstables()[0].path, sst1);
         assert_eq!(loaded.sstables()[1].path, sst2);
@@ -496,7 +507,7 @@ mod tests {
         let path = temp_dir.path().join("MANIFEST");
 
         let mut manifest = Manifest::new(path.clone());
-        manifest.register_sstable(PathBuf::from("/nonexistent/001.sst"), 1, 100).unwrap();
+        manifest.register_sstable(PathBuf::from("/nonexistent/001.sst"), 1000, 100_000).unwrap();
         manifest.save().unwrap();
 
         let result = Manifest::load(&path, true);
@@ -517,7 +528,7 @@ mod tests {
         fs::write(&sst, b"dummy").unwrap();
 
         let mut manifest = Manifest::new(path.clone());
-        manifest.register_sstable(sst, 1, 100).unwrap();
+        manifest.register_sstable(sst, 1000, 100_000).unwrap();
         manifest.save().unwrap();
 
         let mut contents = fs::read(&path).unwrap();
@@ -537,15 +548,15 @@ mod tests {
     fn test_remove_sstables() {
         let mut manifest = Manifest::new(PathBuf::from("/tmp/MANIFEST"));
 
-        manifest.register_sstable(PathBuf::from("/data/001.sst"), 1, 100).unwrap();
-        manifest.register_sstable(PathBuf::from("/data/002.sst"), 101, 200).unwrap();
-        manifest.register_sstable(PathBuf::from("/data/003.sst"), 201, 300).unwrap();
+        manifest.register_sstable(PathBuf::from("/data/001.sst"), 1000, 100_000).unwrap();
+        manifest.register_sstable(PathBuf::from("/data/002.sst"), 100_001, 200_000).unwrap();
+        manifest.register_sstable(PathBuf::from("/data/003.sst"), 200_001, 300_000).unwrap();
 
         manifest.remove_sstables(&[PathBuf::from("/data/001.sst"), PathBuf::from("/data/002.sst")]);
 
         assert_eq!(manifest.sstable_count(), 1);
         assert_eq!(manifest.sstables()[0].path, PathBuf::from("/data/003.sst"));
-        assert_eq!(manifest.checkpoint_lsn(), 300);
+        assert_eq!(manifest.checkpoint_timestamp_ns(), 300_000);
     }
 
     #[test]
@@ -594,13 +605,13 @@ mod tests {
         fs::write(&sst, b"dummy").unwrap();
 
         let mut manifest = Manifest::new(path.clone());
-        manifest.register_sstable(sst.clone(), 1, 100).unwrap();
+        manifest.register_sstable(sst.clone(), 1000, 100_000).unwrap();
         manifest.save().unwrap();
 
         let loaded1 = Manifest::load(&path, true).unwrap();
         let loaded2 = Manifest::load(&path, true).unwrap();
 
-        assert_eq!(loaded1.checkpoint_lsn(), loaded2.checkpoint_lsn());
+        assert_eq!(loaded1.checkpoint_timestamp_ns(), loaded2.checkpoint_timestamp_ns());
         assert_eq!(loaded1.sstable_count(), loaded2.sstable_count());
         assert_eq!(loaded1.sstables(), loaded2.sstables());
     }

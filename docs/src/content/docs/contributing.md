@@ -51,15 +51,15 @@ For true durability validation, use Docker with LazyFS:
 # Build the Docker image
 docker build -f lazyfs/Dockerfile.crash-test -t kifa-crash-test .
 
-# Test cautious mode (expects zero gaps)
+# Test cautious mode (expects zero data loss)
 docker run --rm --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \
   --cycles 10 --flush-mode cautious
 
-# Test normal mode (allows gaps, up to 49 entries at risk)
+# Test normal mode (up to 49 entries at risk per crash)
 docker run --rm --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \
   --cycles 10 --flush-mode normal
 
-# Test emergency mode (expects zero gaps)
+# Test emergency mode (expects zero data loss)
 docker run --rm --cap-add SYS_ADMIN --device /dev/fuse kifa-crash-test \
   --cycles 10 --flush-mode emergency
 ```

@@ -12,9 +12,9 @@
 //! **Flush Mode Behavior**
 //!
 //! The test defaults to `cautious` mode where every write is fsync'd and no
-//! data loss is expected. In `normal` mode, gaps may occur because up to 49
-//! entries can be lost on crash due to batched fsync. The test will report
-//! gaps but this is expected behavior for normal mode, not a failure.
+//! data loss is expected. In `normal` mode, up to 49 entries can be lost on
+//! crash due to batched fsync. The test will report any loss but this is
+//! expected behavior for normal mode, not a failure.
 
 #![feature(string_from_utf8_lossy_owned)]
 
@@ -111,27 +111,6 @@ struct Args {
     gen_transactions_bin: PathBuf,
 }
 
-/// Status of gaps detected in the database during verification.
-#[derive(Debug, PartialEq, Clone, Default)]
-enum GapStatus {
-    /// No gaps were detected in the sequence.
-    None,
-    /// One or more gaps were detected in the sequence.
-    Present,
-    /// Gap status could not be determined from the output.
-    #[default]
-    Unknown,
-}
-
-/// Statistics extracted from the kifa stats command output.
-#[derive(Debug, Default)]
-struct StatsResult {
-    /// Total number of entries in the database.
-    entries: u64,
-    /// Status of sequence gaps in the database.
-    gaps: GapStatus,
-}
-
 /// Result of a single crash cycle verification.
 #[derive(Debug)]
 struct CycleResult {
@@ -139,11 +118,9 @@ struct CycleResult {
     passed: bool,
     /// Number of entries found in the database after the cycle.
     entries: u64,
-    /// Gap status detected during verification.
-    gaps: GapStatus,
-    /// Last LSN reported as durable before crash.
-    last_durable_lsn: u64,
-    /// Entries lost (durable - recovered).
+    /// Expected durable entry count (`prev_entries` + durable confirmations this cycle).
+    expected_durable: u64,
+    /// Entries lost (expected durable - recovered).
     entries_lost: u64,
     /// Optional reason for failure if the cycle did not pass.
     reason: Option<String>,
@@ -162,8 +139,6 @@ struct TestSummary {
     failed: u64,
     /// Final entry count in the database.
     final_entries: u64,
-    /// Number of cycles where gaps were detected.
-    gap_cycles: u64,
     /// Maximum entries lost in any single cycle.
     max_loss: u64,
     /// Total entries lost across all cycles.
@@ -270,23 +245,21 @@ fn spawn_test_pipeline(args: &Args, cycle: u64) -> Result<PipelineHandle> {
     Ok(PipelineHandle { kifa_child, gen_child })
 }
 
-/// Parses stderr output to find the last durable LSN and collect errors.
+/// Parses stderr output to count durable confirmations and collect errors.
 fn parse_daemon_stderr(stderr: ChildStderr) -> (u64, Vec<String>) {
     let reader = io::BufReader::new(stderr);
-    let mut last_durable_lsn = 0;
+    let mut durable_count = 0;
     let mut errors = Vec::new();
 
     for line in reader.lines().map_while(Result::ok) {
-        if let Some(lsn_str) = line.strip_prefix("DURABLE:")
-            && let Ok(lsn) = lsn_str.parse::<u64>()
-        {
-            last_durable_lsn = lsn;
+        if line.starts_with("DURABLE:") {
+            durable_count += 1;
         } else if !line.is_empty() {
             errors.push(line);
         }
     }
 
-    (last_durable_lsn, errors)
+    (durable_count, errors)
 }
 
 /// Refreshes the system process list once and returns the System handle.
@@ -411,25 +384,19 @@ fn run_stats_command(kifa_bin: &Path, data_dir: &Path) -> Result<String> {
     Ok(result)
 }
 
-/// Parses the stats command output to extract entry count and gap status.
+/// Parses the stats command output to extract entry count.
 ///
-/// The output format is expected to contain lines like "Total entries: 12345"
-/// and "Gaps: none". If parsing fails, conservative defaults are returned to
-/// avoid false positives in the test results.
-fn parse_stats_output(output: &str) -> StatsResult {
-    let mut result = StatsResult::default();
+/// The output format is expected to contain a line like "Total entries: 12345".
+/// If parsing fails, conservative defaults are returned to avoid false positives
+/// in the test results.
+fn parse_stats_output(output: &str) -> u64 {
+    let mut result = u64::default();
 
     for line in output.lines() {
         if line.contains("Total entries:")
             && let Some(value) = line.split_whitespace().last()
         {
-            result.entries = value.parse().unwrap_or_default();
-        }
-
-        if line.contains("Gaps:")
-            && let Some(value) = line.split_whitespace().last()
-        {
-            result.gaps = if value == "none" { GapStatus::None } else { GapStatus::Present };
+            result = value.parse().unwrap_or_default();
         }
     }
 
@@ -439,53 +406,39 @@ fn parse_stats_output(output: &str) -> StatsResult {
 /// Verifies the integrity of the database after a crash cycle.
 ///
 /// Checks critical invariants based on flush mode:
-/// * Cautious/Emergency: No gaps allowed, no durable entries lost.
-/// * Normal: Gaps allowed, up to 49 entries at risk due to batched fsync.
+/// * Cautious/Emergency: No durable entries lost.
+/// * Normal: Up to 49 entries at risk due to batched fsync.
 /// * All modes: Entry count must be monotonically non-decreasing.
 ///
 /// Violations indicate corruption or unexpected data loss.
 fn verify_integrity(
-    stats: &StatsResult,
+    stats: u64,
     prev_entries: u64,
-    last_durable_lsn: u64,
+    expected_durable: u64,
     flush_mode: FlushMode,
 ) -> CycleResult {
-    let entries_lost = last_durable_lsn.saturating_sub(stats.entries);
+    let entries_lost = expected_durable.saturating_sub(stats);
     let mut passed = true;
     let mut reason = None;
 
-    if stats.gaps != GapStatus::None && flush_mode.is_durable() {
+    if stats < prev_entries {
         passed = false;
-        reason = Some(format!("gaps detected: {:?}", stats.gaps));
-    }
-
-    if stats.entries < prev_entries {
-        passed = false;
-        reason = Some(format!("entries decreased: {} < {}", stats.entries, prev_entries));
+        reason = Some(format!("entries decreased: {stats} < {prev_entries}"));
     }
 
     if flush_mode.is_durable() && entries_lost > 0 {
         passed = false;
         reason = Some(format!(
-            "durable entries lost: {} (durable={}, recovered={})",
-            entries_lost, last_durable_lsn, stats.entries
+            "durable entries lost: {entries_lost} (expected={expected_durable}, recovered={stats})"
         ));
     } else if !flush_mode.is_durable() && entries_lost > NORMAL_MODE_MAX_LOSS {
         passed = false;
         reason = Some(format!(
-            "excessive loss: {} > {} (durable={}, recovered={})",
-            entries_lost, NORMAL_MODE_MAX_LOSS, last_durable_lsn, stats.entries
+            "excessive loss: {entries_lost} > {NORMAL_MODE_MAX_LOSS} (expected={expected_durable}, recovered={stats})"
         ));
     }
 
-    CycleResult {
-        passed,
-        entries: stats.entries,
-        gaps: stats.gaps.clone(),
-        last_durable_lsn,
-        entries_lost,
-        reason,
-    }
+    CycleResult { passed, entries: stats, expected_durable, entries_lost, reason }
 }
 
 /// Executes a single crash cycle: spawn, kill, and verify.
@@ -513,7 +466,7 @@ fn run_single_cycle(args: &Args, cycle: u64, prev_entries: u64) -> Result<CycleR
     let _ = handle.gen_child.wait();
     let _ = handle.kifa_child.wait();
 
-    let (last_durable_lsn, errors) = stderr.map_or_else(|| (0, Vec::new()), parse_daemon_stderr);
+    let (durable_count, errors) = stderr.map_or_else(|| (0, Vec::new()), parse_daemon_stderr);
 
     cleanup_orphaned_processes(&args.data_dir, cycle);
 
@@ -527,22 +480,23 @@ fn run_single_cycle(args: &Args, cycle: u64, prev_entries: u64) -> Result<CycleR
     let stats = parse_stats_output(&stats_output);
 
     // This and the later aids in debugging internal failures.
-    if stats.entries == 0 && stats.gaps == GapStatus::Unknown {
+    if stats == 0 {
         eprintln!("  kifa stats returned no parseable output:");
         for line in stats_output.lines().take(20) {
             eprintln!("  {line}");
         }
     }
 
-    if last_durable_lsn == 0 && !errors.is_empty() {
+    if durable_count == 0 && !errors.is_empty() {
         eprintln!("  daemon stderr is missing DURABLE lines:");
         for line in errors.iter().take(20) {
             eprintln!("  {line}");
         }
     }
 
+    let expected_durable = prev_entries + durable_count;
     let result =
-        verify_integrity(&stats, prev_entries, last_durable_lsn, args.flush_mode.parse().unwrap());
+        verify_integrity(stats, prev_entries, expected_durable, args.flush_mode.parse().unwrap());
 
     Ok(result)
 }
@@ -554,7 +508,6 @@ fn run_single_cycle(args: &Args, cycle: u64, prev_entries: u64) -> Result<CycleR
 fn run_crash_test(args: &Args) -> Result<TestSummary> {
     let mut passed = 0;
     let mut failed = 0;
-    let mut gap_cycles = 0;
     let mut prev_entries = 0;
     let mut max_loss = 0;
     let mut total_loss = 0;
@@ -567,31 +520,21 @@ fn run_crash_test(args: &Args) -> Result<TestSummary> {
 
         if result.passed {
             println!(
-                "[{:3}/{}] PASS  entries={:<8} durable={:<8} lost={:<4} gaps={:?}",
-                cycle,
-                args.cycles,
-                result.entries,
-                result.last_durable_lsn,
-                result.entries_lost,
-                result.gaps
+                "[{:3}/{}] PASS  entries={:<8} expected={:<8} lost={:<4}",
+                cycle, args.cycles, result.entries, result.expected_durable, result.entries_lost,
             );
             passed += 1;
         } else {
             println!(
-                "[{:3}/{}] FAIL  entries={:<8} durable={:<8} lost={:<4} gaps={:?} - {}",
+                "[{:3}/{}] FAIL  entries={:<8} expected={:<8} lost={:<4} - {}",
                 cycle,
                 args.cycles,
                 result.entries,
-                result.last_durable_lsn,
+                result.expected_durable,
                 result.entries_lost,
-                result.gaps,
                 result.reason.as_deref().unwrap_or("unknown")
             );
             failed += 1;
-        }
-
-        if result.gaps != GapStatus::None {
-            gap_cycles += 1;
         }
 
         prev_entries = result.entries;
@@ -602,7 +545,6 @@ fn run_crash_test(args: &Args) -> Result<TestSummary> {
         passed,
         failed,
         final_entries: prev_entries,
-        gap_cycles,
         max_loss,
         total_loss,
     })
@@ -633,7 +575,6 @@ fn print_summary(summary: &TestSummary) {
     println!("Cycles:     {}/{} passed", summary.passed, summary.total_cycles);
     println!("Failed:     {}", summary.failed);
     println!("Entries:    {} verified", summary.final_entries);
-    println!("Gaps:       {} cycles", summary.gap_cycles);
     println!("Max loss:   {} entries", summary.max_loss);
     println!("Total loss: {} entries", summary.total_loss);
 }
@@ -655,72 +596,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_stats_output_no_gaps() {
-        let output = "Total entries: 12345\nGaps: none\n";
+    fn test_parse_stats_output_with_entries() {
+        let output = "Total entries: 12345\n";
         let result = parse_stats_output(output);
-        assert_eq!(result.entries, 12345);
-        assert_eq!(result.gaps, GapStatus::None);
-    }
-
-    #[test]
-    fn test_parse_stats_output_with_gaps() {
-        let output = "Total entries: 999\nGaps: 3\n";
-        let result = parse_stats_output(output);
-        assert_eq!(result.entries, 999);
-        assert_eq!(result.gaps, GapStatus::Present);
+        assert_eq!(result, 12345);
     }
 
     #[test]
     fn test_parse_stats_output_empty() {
         let output = "";
         let result = parse_stats_output(output);
-        assert_eq!(result.entries, 0);
-        assert_eq!(result.gaps, GapStatus::Unknown);
+        assert_eq!(result, 0);
     }
 
     #[test]
     fn test_verify_integrity_pass() {
-        let stats = StatsResult { entries: 100, gaps: GapStatus::None };
-        let result = verify_integrity(&stats, 50, 100, FlushMode::Cautious);
+        let result = verify_integrity(100, 50, 100, FlushMode::Cautious);
         assert!(result.passed);
         assert!(result.reason.is_none());
         assert_eq!(result.entries_lost, 0);
     }
 
     #[test]
-    fn test_verify_integrity_fail_gaps_cautious() {
-        let stats = StatsResult { entries: 100, gaps: GapStatus::Present };
-        let result = verify_integrity(&stats, 50, 100, FlushMode::Cautious);
-        assert!(!result.passed);
-        assert!(result.reason.is_some());
-    }
-
-    #[test]
-    fn test_verify_integrity_allow_gaps_normal() {
-        let stats = StatsResult { entries: 100, gaps: GapStatus::Present };
-        let result = verify_integrity(&stats, 50, 100, FlushMode::Normal);
-        assert!(result.passed);
-    }
-
-    #[test]
     fn test_verify_integrity_fail_decreased_entries() {
-        let stats = StatsResult { entries: 30, gaps: GapStatus::None };
-        let result = verify_integrity(&stats, 50, 30, FlushMode::Cautious);
+        let result = verify_integrity(30, 50, 30, FlushMode::Cautious);
         assert!(!result.passed);
         assert!(result.reason.as_ref().unwrap().contains("entries decreased"));
     }
 
     #[test]
     fn test_verify_integrity_same_entries_pass() {
-        let stats = StatsResult { entries: 50, gaps: GapStatus::None };
-        let result = verify_integrity(&stats, 50, 50, FlushMode::Cautious);
+        let result = verify_integrity(50, 50, 50, FlushMode::Cautious);
         assert!(result.passed);
     }
 
     #[test]
     fn test_verify_integrity_cautious_loss_fails() {
-        let stats = StatsResult { entries: 95, gaps: GapStatus::None };
-        let result = verify_integrity(&stats, 50, 100, FlushMode::Cautious);
+        let result = verify_integrity(95, 50, 100, FlushMode::Cautious);
         assert!(!result.passed);
         assert_eq!(result.entries_lost, 5);
         assert!(result.reason.as_ref().unwrap().contains("durable entries lost"));
@@ -728,16 +640,14 @@ mod tests {
 
     #[test]
     fn test_verify_integrity_normal_loss_within_limit() {
-        let stats = StatsResult { entries: 60, gaps: GapStatus::None };
-        let result = verify_integrity(&stats, 50, 100, FlushMode::Normal);
+        let result = verify_integrity(60, 50, 100, FlushMode::Normal);
         assert!(result.passed);
         assert_eq!(result.entries_lost, 40);
     }
 
     #[test]
     fn test_verify_integrity_normal_loss_exceeds_limit() {
-        let stats = StatsResult { entries: 40, gaps: GapStatus::None };
-        let result = verify_integrity(&stats, 30, 100, FlushMode::Normal);
+        let result = verify_integrity(40, 30, 100, FlushMode::Normal);
         assert!(!result.passed);
         assert_eq!(result.entries_lost, 60);
         assert!(result.reason.as_ref().unwrap().contains("excessive loss"));

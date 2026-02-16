@@ -26,8 +26,7 @@ use memchr_rs::memchr;
 pub enum Error {
     Engine(engine::Error),
     Io(io::Error),
-    InvalidLsnRange { from: u64, to: u64 },
-    InvalidTimeRange { from_ms: u64, to_ms: u64 },
+    InvalidTimeRange { from_ns: u64, to_ns: u64 },
     TimeParseFailed(String),
 }
 
@@ -39,15 +38,12 @@ impl fmt::Display for Error {
         match self {
             Self::Engine(e) => e.fmt(f),
             Self::Io(e) => e.fmt(f),
-            Self::InvalidLsnRange { from, to } => {
-                write!(f, "invalid LSN range: {from} > {to}")
-            }
-            Self::InvalidTimeRange { from_ms, to_ms } => {
+            Self::InvalidTimeRange { from_ns, to_ns } => {
                 write!(
                     f,
                     "--from-time ({}) is after --to-time ({})",
-                    format_timestamp_ms(*from_ms),
-                    format_timestamp_ms(*to_ms)
+                    format_timestamp_ns(*from_ns),
+                    format_timestamp_ns(*to_ns)
                 )
             }
             Self::TimeParseFailed(s) => {
@@ -98,10 +94,8 @@ pub enum OutputFormat {
 
 pub struct QueryOptions {
     pub data_dir: PathBuf,
-    pub from_lsn: Option<u64>,
-    pub to_lsn: Option<u64>,
-    pub from_time_ms: Option<u64>,
-    pub to_time_ms: Option<u64>,
+    pub from_time_ns: Option<u64>,
+    pub to_time_ns: Option<u64>,
     pub format: OutputFormat,
     pub output_file: Option<PathBuf>,
 }
@@ -117,89 +111,67 @@ pub fn parse_time_input(s: &str) -> Result<u64, Error> {
         let now = SystemTime::now();
         let target =
             now.checked_sub(duration).ok_or_else(|| Error::TimeParseFailed(s.to_string()))?;
-        let unix_ms = target
+        let unix_ns = target
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|_| Error::TimeParseFailed(s.to_string()))?;
-        return Ok(u64::try_from(unix_ms.as_millis()).unwrap_or(u64::MAX));
+        return Ok(u64::try_from(unix_ns.as_nanos()).unwrap_or(u64::MAX));
     }
 
     if let Ok(system_time) = humantime::parse_rfc3339_weak(trimmed) {
-        let unix_ms = system_time
+        let unix_ns = system_time
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|_| Error::TimeParseFailed(s.to_string()))?;
-        return Ok(u64::try_from(unix_ms.as_millis()).unwrap_or(u64::MAX));
+        return Ok(u64::try_from(unix_ns.as_nanos()).unwrap_or(u64::MAX));
     }
 
-    // Appending midnight allows users to specify just a date like "2026-01-29" without a time component.
     let with_midnight = format!("{trimmed} 00:00:00");
     if let Ok(system_time) = humantime::parse_rfc3339_weak(&with_midnight) {
-        let unix_ms = system_time
+        let unix_ns = system_time
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|_| Error::TimeParseFailed(s.to_string()))?;
-        return Ok(u64::try_from(unix_ms.as_millis()).unwrap_or(u64::MAX));
+        return Ok(u64::try_from(unix_ns.as_nanos()).unwrap_or(u64::MAX));
     }
 
     Err(Error::TimeParseFailed(s.to_string()))
 }
 
-pub fn validate_time_range(from_ms: Option<u64>, to_ms: Option<u64>) -> Result<(), Error> {
-    if let (Some(from_ms), Some(to_ms)) = (from_ms, to_ms)
-        && from_ms > to_ms
+pub fn validate_time_range(from_ns: Option<u64>, to_ns: Option<u64>) -> Result<(), Error> {
+    if let (Some(from_ns), Some(to_ns)) = (from_ns, to_ns)
+        && from_ns > to_ns
     {
-        return Err(Error::InvalidTimeRange { from_ms, to_ms });
+        return Err(Error::InvalidTimeRange { from_ns, to_ns });
     }
     Ok(())
 }
 
 pub fn run_query(options: &QueryOptions) -> Result<u64, Error> {
-    let from = options.from_lsn.unwrap_or_default();
-    let to = options.to_lsn.unwrap_or(u64::MAX);
+    let from_ns = options.from_time_ns.unwrap_or_default();
+    let to_ns = options.to_time_ns.unwrap_or(u64::MAX);
 
-    if from > to {
-        return Err(Error::InvalidLsnRange { from, to });
-    }
-
-    let from_time = options.from_time_ms.unwrap_or_default();
-    let to_time = options.to_time_ms.unwrap_or(u64::MAX);
-
-    validate_time_range(Some(from_time), Some(to_time))?;
+    validate_time_range(Some(from_ns), Some(to_ns))?;
 
     // Compaction is disabled because queries are read-only and should not mutate storage.
     let config = Config { compaction_enabled: false, ..Config::default() };
     let (engine, _) = StorageEngine::open(&options.data_dir, config)?;
-    let stats = engine.stats();
-    let entries = engine.scan(from, to)?;
-    let scan_count = entries.len();
+    let entries = engine.scan(from_ns, to_ns)?;
 
     let mut count = 0;
     let stdout = io::stdout();
     let mut writer = BufWriter::new(stdout.lock());
 
     if options.format == OutputFormat::Csv {
-        writeln!(writer, "lsn,timestamp,timestamp_ms,data")?;
+        writeln!(writer, "timestamp,timestamp_ns,data")?;
     }
 
     for entry in entries {
-        if entry.timestamp_ms < from_time || entry.timestamp_ms > to_time {
-            continue;
-        }
         write_entry(&mut writer, &entry, options.format)?;
         count += 1;
     }
 
     writer.flush()?;
 
-    if count == 0 && stats.wal.last_durable_lsn > 0 {
-        if scan_count == 0 {
-            eprintln!(
-                "No entries in LSN range. Storage has LSNs 1..={}",
-                stats.wal.last_durable_lsn
-            );
-        } else {
-            eprintln!(
-                "{scan_count} entries matched the LSN range but none matched the time filter"
-            );
-        }
+    if count == 0 {
+        eprintln!("No entries matched the time range");
     }
 
     Ok(count)
@@ -209,37 +181,25 @@ pub fn run_export(options: &QueryOptions) -> Result<u64, Error> {
     let output_path = options.output_file.as_ref().expect("output_file required for export");
     let temp_path = temp_path(output_path);
 
-    let from = options.from_lsn.unwrap_or_default();
-    let to = options.to_lsn.unwrap_or(u64::MAX);
+    let from_ns = options.from_time_ns.unwrap_or_default();
+    let to_ns = options.to_time_ns.unwrap_or(u64::MAX);
 
-    if from > to {
-        return Err(Error::InvalidLsnRange { from, to });
-    }
-
-    let from_time = options.from_time_ms.unwrap_or_default();
-    let to_time = options.to_time_ms.unwrap_or(u64::MAX);
-
-    validate_time_range(Some(from_time), Some(to_time))?;
+    validate_time_range(Some(from_ns), Some(to_ns))?;
 
     let config = Config { compaction_enabled: false, ..Config::default() };
     let (engine, _) = StorageEngine::open(&options.data_dir, config)?;
-    let stats = engine.stats();
-    let entries = engine.scan(from, to)?;
-    let scan_count = entries.len();
+    let entries = engine.scan(from_ns, to_ns)?;
 
     let file = File::create(&temp_path)?;
     let mut guard = TempFileGuard::new(&temp_path);
     let mut writer = BufWriter::new(file);
 
     if options.format == OutputFormat::Csv {
-        writeln!(writer, "lsn,timestamp,timestamp_ms,data")?;
+        writeln!(writer, "timestamp,timestamp_ns,data")?;
     }
 
     let mut count = 0;
     for entry in entries {
-        if entry.timestamp_ms < from_time || entry.timestamp_ms > to_time {
-            continue;
-        }
         write_entry(&mut writer, &entry, options.format)?;
         count += 1;
     }
@@ -256,17 +216,8 @@ pub fn run_export(options: &QueryOptions) -> Result<u64, Error> {
 
     log::info!("Exported {count} entries to {}", output_path.display());
 
-    if count == 0 && stats.wal.last_durable_lsn > 0 {
-        if scan_count == 0 {
-            eprintln!(
-                "No entries in LSN range. Storage has LSNs 1..={}",
-                stats.wal.last_durable_lsn
-            );
-        } else {
-            eprintln!(
-                "{scan_count} entries matched the LSN range but none matched the time filter"
-            );
-        }
+    if count == 0 {
+        eprintln!("No entries matched the time range");
     }
 
     Ok(count)
@@ -274,31 +225,40 @@ pub fn run_export(options: &QueryOptions) -> Result<u64, Error> {
 
 pub fn run_stats(data_dir: &Path) -> Result<Stats, Error> {
     let config = Config { compaction_enabled: false, ..Config::default() };
-    let (engine, report) = StorageEngine::open(data_dir, config)?;
+    let (engine, _) = StorageEngine::open(data_dir, config)?;
     let stats = engine.stats();
 
-    let total_entries = stats.wal.last_durable_lsn;
+    let mut total_entries = 0;
+    let mut first_ts = None;
+    let mut last_ts = None;
+
+    for entry in engine.entries()? {
+        if first_ts.is_none() {
+            first_ts = Some(entry.timestamp_ns);
+        }
+        last_ts = Some(entry.timestamp_ns);
+        total_entries += 1;
+    }
 
     println!("Storage:");
     println!("  Total entries: {total_entries}");
-    println!("  SSTables: {} (checkpoint LSN: {})", stats.sstable_count, stats.checkpoint_lsn);
+    if stats.checkpoint_timestamp_ns > 0 {
+        println!(
+            "  SSTables: {} (checkpoint timestamp: {})",
+            stats.sstable_count,
+            format_timestamp_ns(stats.checkpoint_timestamp_ns)
+        );
+    } else {
+        println!("  SSTables: {}", stats.sstable_count);
+    }
     println!("  Memtable: {} entries", stats.memtable_entry_count);
     println!();
     println!("WAL:");
     println!("  Flush mode: {:?}", stats.wal.flush_mode);
     println!();
     println!("Health:");
-    if let (Some(first_ts), Some(last_ts)) = (report.first_timestamp_ms, report.last_timestamp_ms) {
-        println!(
-            "  Time range: {} - {}",
-            format_timestamp_ms(first_ts),
-            format_timestamp_ms(last_ts)
-        );
-    }
-    if report.gaps.is_empty() {
-        println!("  Gaps: none");
-    } else {
-        println!("  Gaps: {} ranges", report.gaps.len());
+    if let (Some(first), Some(last)) = (first_ts, last_ts) {
+        println!("  Time range: {} - {}", format_timestamp_ns(first), format_timestamp_ns(last));
     }
 
     Ok(stats)
@@ -316,14 +276,14 @@ fn write_entry<W: Write>(writer: &mut W, entry: &Entry, format: OutputFormat) ->
 // Howard Hinnant's civil_from_days algorithm for zero-alloc date conversion.
 // See https://howardhinnant.github.io/date_algorithms.html#civil_from_days
 #[allow(clippy::cast_sign_loss)]
-fn timestamp_buf(ms: u64) -> [u8; 23] {
-    const MILLIS_PER_SEC: u64 = 1000;
+fn timestamp_buf(ns: u64) -> [u8; 23] {
+    const NANOS_PER_SEC: u64 = 1_000_000_000;
     const SECS_PER_MIN: u32 = 60;
     const SECS_PER_HOUR: u32 = 3600;
     const SECS_PER_DAY: u64 = 86400;
     const DAYS_PER_ERA: i64 = 146_097;
 
-    let total_secs = ms / MILLIS_PER_SEC;
+    let total_secs = ns / NANOS_PER_SEC;
     let secs_in_day = (total_secs % SECS_PER_DAY) as u32;
     let days = (total_secs / SECS_PER_DAY).cast_signed();
 
@@ -410,15 +370,12 @@ impl fmt::Display for TimestampDisplay {
     }
 }
 
-pub fn format_timestamp_ms(ms: u64) -> TimestampDisplay {
-    TimestampDisplay(timestamp_buf(ms))
+pub fn format_timestamp_ns(ns: u64) -> TimestampDisplay {
+    TimestampDisplay(timestamp_buf(ns))
 }
 
 fn write_entry_text<W: Write>(writer: &mut W, entry: &Entry) -> io::Result<()> {
-    let ts = timestamp_buf(entry.timestamp_ms);
-    writer.write_all(b"[")?;
-    write_u64_decimal(writer, entry.lsn)?;
-    writer.write_all(b"] ")?;
+    let ts = timestamp_buf(entry.timestamp_ns);
     writer.write_all(&ts)?;
     writer.write_all(b" ")?;
     write_lossy(writer, &entry.data)?;
@@ -441,25 +398,22 @@ fn write_lossy<W: Write>(writer: &mut W, data: &[u8]) -> io::Result<()> {
 }
 
 fn write_entry_json<W: Write>(writer: &mut W, entry: &Entry) -> io::Result<()> {
-    let ts = timestamp_buf(entry.timestamp_ms);
-    writer.write_all(br#"{"lsn":"#)?;
-    write_u64_decimal(writer, entry.lsn)?;
-    writer.write_all(br#","timestamp":""#)?;
+    let ts = timestamp_buf(entry.timestamp_ns);
+    writer.write_all(br#"{"timestamp":""#)?;
     writer.write_all(&ts)?;
-    writer.write_all(br#"","timestamp_ms":"#)?;
-    write_u64_decimal(writer, entry.timestamp_ms)?;
+    writer.write_all(br#"","timestamp_ns":"#)?;
+    write_u64_decimal(writer, entry.timestamp_ns)?;
     writer.write_all(br#","data":""#)?;
     write_json_escaped_bytes(writer, &entry.data)?;
     writer.write_all(b"\"}\n")
 }
 
 fn write_entry_csv<W: Write>(writer: &mut W, entry: &Entry) -> io::Result<()> {
-    let ts = timestamp_buf(entry.timestamp_ms);
-    write_u64_decimal(writer, entry.lsn)?;
-    writer.write_all(br#",""#)?;
+    let ts = timestamp_buf(entry.timestamp_ns);
+    writer.write_all(br#"""#)?;
     writer.write_all(&ts)?;
     writer.write_all(br#"","#)?;
-    write_u64_decimal(writer, entry.timestamp_ms)?;
+    write_u64_decimal(writer, entry.timestamp_ns)?;
     writer.write_all(br#",""#)?;
     write_csv_escaped_bytes(writer, &entry.data)?;
     writer.write_all(b"\"\n")
@@ -468,11 +422,9 @@ fn write_entry_csv<W: Write>(writer: &mut W, entry: &Entry) -> io::Result<()> {
 fn write_entry_hex<W: Write>(writer: &mut W, entry: &Entry) -> io::Result<()> {
     const HEX: &[u8; 16] = b"0123456789abcdef";
 
-    let mut header = [0; 34];
-    write_hex16(&mut header, 0, entry.lsn);
+    let mut header = [0; 17];
+    write_hex16(&mut header, 0, entry.timestamp_ns);
     header[16] = b' ';
-    write_hex16(&mut header, 17, entry.timestamp_ms);
-    header[33] = b' ';
     writer.write_all(&header)?;
 
     // A stack buffer amortizes write syscalls. Each input byte yields two hex
@@ -615,54 +567,59 @@ mod tests {
 
     use super::*;
 
-    fn now_ms() -> u64 {
-        u64::try_from(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis())
+    fn now_ns() -> u64 {
+        u64::try_from(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_nanos())
             .unwrap()
     }
 
     fn assert_approx_eq(actual: u64, expected: u64, tolerance: u64) {
         let diff = actual.abs_diff(expected);
-        assert!(diff < tolerance, "expected {expected} ± {tolerance}, got {actual} (diff: {diff})");
+        assert!(
+            diff < tolerance,
+            "expected {expected} +/- {tolerance}, got {actual} (diff: {diff})"
+        );
     }
 
     #[test]
     fn test_parse_time_relative_hours() {
         let result = parse_time_input("1h").unwrap();
-        let expected_approx = now_ms() - 3600 * 1000;
-        assert_approx_eq(result, expected_approx, 1000);
+        let expected_approx = now_ns() - 3600 * 1_000_000_000;
+        assert_approx_eq(result, expected_approx, 1_000_000_000);
     }
 
     #[test]
     fn test_parse_time_relative_minutes() {
         let result = parse_time_input("30m").unwrap();
-        let expected_approx = now_ms() - 30 * 60 * 1000;
-        assert_approx_eq(result, expected_approx, 1000);
+        let expected_approx = now_ns() - 30 * 60 * 1_000_000_000;
+        assert_approx_eq(result, expected_approx, 1_000_000_000);
     }
 
     #[test]
     fn test_parse_time_relative_days() {
         let result = parse_time_input("2d").unwrap();
-        let expected_approx = now_ms() - 2 * 24 * 3600 * 1000;
-        assert_approx_eq(result, expected_approx, 1000);
+        let expected_approx = now_ns() - 2 * 24 * 3600 * 1_000_000_000;
+        assert_approx_eq(result, expected_approx, 1_000_000_000);
     }
 
     #[test]
     fn test_parse_time_relative_combined() {
         let result = parse_time_input("1h30m").unwrap();
-        let expected_approx = now_ms() - 90 * 60 * 1000;
-        assert_approx_eq(result, expected_approx, 1000);
+        let expected_approx = now_ns() - 90 * 60 * 1_000_000_000;
+        assert_approx_eq(result, expected_approx, 1_000_000_000);
     }
+
+    const TS_2026_NS: u64 = 1_769_688_000_000_000_000;
 
     #[test]
     fn test_parse_time_absolute_weak() {
         let result = parse_time_input("2026-01-29 12:00:00").unwrap();
-        assert_eq!(result, 1_769_688_000_000);
+        assert_eq!(result, TS_2026_NS);
     }
 
     #[test]
     fn test_parse_time_absolute_rfc3339() {
         let result = parse_time_input("2026-01-29T12:00:00Z").unwrap();
-        assert_eq!(result, 1_769_688_000_000);
+        assert_eq!(result, TS_2026_NS);
     }
 
     #[test]
@@ -693,115 +650,94 @@ mod tests {
 
     #[test]
     fn test_format_json_utf8() {
-        let entry = Entry {
-            lsn: 42,
-            timestamp_ms: 1_769_688_000_000,
-            data: Arc::from(b"hello world".to_vec()),
-        };
+        let entry = Entry { timestamp_ns: TS_2026_NS, data: Arc::from(b"hello world".to_vec()) };
         let mut buf = Vec::new();
         write_entry_json(&mut buf, &entry).unwrap();
-        assert_eq!(
-            buf,
-            b"{\"lsn\":42,\"timestamp\":\"2026-01-29 12:00:00 UTC\",\"timestamp_ms\":1769688000000,\"data\":\"hello world\"}\n"
+        let expected = format!(
+            "{{\"timestamp\":\"2026-01-29 12:00:00 UTC\",\"timestamp_ns\":{TS_2026_NS},\"data\":\"hello world\"}}\n"
         );
+        assert_eq!(String::from_utf8(buf).unwrap(), expected);
     }
 
     #[test]
     fn test_format_json_special_chars() {
         let entry = Entry {
-            lsn: 1,
-            timestamp_ms: 1_769_688_000_000,
+            timestamp_ns: TS_2026_NS,
             data: Arc::from(b"line\nwith\ttabs\"quotes\\".to_vec()),
         };
         let mut buf = Vec::new();
         write_entry_json(&mut buf, &entry).unwrap();
-        assert_eq!(
-            buf,
-            b"{\"lsn\":1,\"timestamp\":\"2026-01-29 12:00:00 UTC\",\"timestamp_ms\":1769688000000,\"data\":\"line\\nwith\\ttabs\\\"quotes\\\\\"}\n"
+        let expected = format!(
+            "{{\"timestamp\":\"2026-01-29 12:00:00 UTC\",\"timestamp_ns\":{TS_2026_NS},\"data\":\"line\\nwith\\ttabs\\\"quotes\\\\\"}}\n"
         );
+        assert_eq!(String::from_utf8(buf).unwrap(), expected);
     }
 
     #[test]
     fn test_format_json_binary() {
-        let entry =
-            Entry { lsn: 99, timestamp_ms: 1_769_688_000_000, data: Arc::from([0x00, 0xFF, 0x80]) };
+        let entry = Entry { timestamp_ns: TS_2026_NS, data: Arc::from([0x00, 0xFF, 0x80]) };
         let mut buf = Vec::new();
         write_entry_json(&mut buf, &entry).unwrap();
-        assert_eq!(
-            buf,
-            b"{\"lsn\":99,\"timestamp\":\"2026-01-29 12:00:00 UTC\",\"timestamp_ms\":1769688000000,\"data\":\"\\u0000\\u00ff\\u0080\"}\n"
+        let expected = format!(
+            "{{\"timestamp\":\"2026-01-29 12:00:00 UTC\",\"timestamp_ns\":{TS_2026_NS},\"data\":\"\\u0000\\u00ff\\u0080\"}}\n"
         );
+        assert_eq!(String::from_utf8(buf).unwrap(), expected);
     }
 
     #[test]
     fn test_format_json_control_chars() {
-        let entry =
-            Entry { lsn: 7, timestamp_ms: 1_769_688_000_000, data: Arc::from([0x01, 0x1F, 0x7F]) };
+        let entry = Entry { timestamp_ns: TS_2026_NS, data: Arc::from([0x01, 0x1F, 0x7F]) };
         let mut buf = Vec::new();
         write_entry_json(&mut buf, &entry).unwrap();
-        assert_eq!(
-            buf,
-            b"{\"lsn\":7,\"timestamp\":\"2026-01-29 12:00:00 UTC\",\"timestamp_ms\":1769688000000,\"data\":\"\\u0001\\u001f\\u007f\"}\n"
+        let expected = format!(
+            "{{\"timestamp\":\"2026-01-29 12:00:00 UTC\",\"timestamp_ns\":{TS_2026_NS},\"data\":\"\\u0001\\u001f\\u007f\"}}\n"
         );
+        assert_eq!(String::from_utf8(buf).unwrap(), expected);
     }
 
     #[test]
     fn test_format_csv_utf8() {
-        let entry = Entry {
-            lsn: 10,
-            timestamp_ms: 1_769_688_000_000,
-            data: Arc::from(b"simple data".to_vec()),
-        };
+        let entry = Entry { timestamp_ns: TS_2026_NS, data: Arc::from(b"simple data".to_vec()) };
         let mut buf = Vec::new();
         write_entry_csv(&mut buf, &entry).unwrap();
-        assert_eq!(buf, b"10,\"2026-01-29 12:00:00 UTC\",1769688000000,\"simple data\"\n");
+        let expected = format!("\"2026-01-29 12:00:00 UTC\",{TS_2026_NS},\"simple data\"\n");
+        assert_eq!(String::from_utf8(buf).unwrap(), expected);
     }
 
     #[test]
     fn test_format_csv_quotes() {
-        let entry = Entry {
-            lsn: 11,
-            timestamp_ms: 1_769_688_000_000,
-            data: Arc::from(b"has \"quotes\" inside".to_vec()),
-        };
+        let entry =
+            Entry { timestamp_ns: TS_2026_NS, data: Arc::from(b"has \"quotes\" inside".to_vec()) };
         let mut buf = Vec::new();
         write_entry_csv(&mut buf, &entry).unwrap();
-        assert_eq!(
-            buf,
-            b"11,\"2026-01-29 12:00:00 UTC\",1769688000000,\"has \"\"quotes\"\" inside\"\n"
-        );
+        let expected =
+            format!("\"2026-01-29 12:00:00 UTC\",{TS_2026_NS},\"has \"\"quotes\"\" inside\"\n");
+        assert_eq!(String::from_utf8(buf).unwrap(), expected);
     }
 
     #[test]
     fn test_format_csv_binary() {
-        let entry = Entry {
-            lsn: 12,
-            timestamp_ms: 1_769_688_000_000,
-            data: Arc::from([0xDE, 0xAD, 0xBE, 0xEF]),
-        };
+        let entry = Entry { timestamp_ns: TS_2026_NS, data: Arc::from([0xDE, 0xAD, 0xBE, 0xEF]) };
         let mut buf = Vec::new();
         write_entry_csv(&mut buf, &entry).unwrap();
-        assert_eq!(buf, b"12,\"2026-01-29 12:00:00 UTC\",1769688000000,\"[hex:deadbeef]\"\n");
+        let expected = format!("\"2026-01-29 12:00:00 UTC\",{TS_2026_NS},\"[hex:deadbeef]\"\n");
+        assert_eq!(String::from_utf8(buf).unwrap(), expected);
     }
 
     #[test]
     fn test_format_text() {
-        let entry = Entry {
-            lsn: 5,
-            timestamp_ms: 1_769_688_000_000,
-            data: Arc::from(b"log message".to_vec()),
-        };
+        let entry = Entry { timestamp_ns: TS_2026_NS, data: Arc::from(b"log message".to_vec()) };
         let mut buf = Vec::new();
         write_entry_text(&mut buf, &entry).unwrap();
-        assert_eq!(buf, b"[5] 2026-01-29 12:00:00 UTC log message\n");
+        assert_eq!(buf, b"2026-01-29 12:00:00 UTC log message\n");
     }
 
     #[test]
     fn test_format_hex() {
-        let entry =
-            Entry { lsn: 256, timestamp_ms: 1_769_688_000_000, data: Arc::from([0xCA, 0xFE]) };
+        let entry = Entry { timestamp_ns: TS_2026_NS, data: Arc::from([0xCA, 0xFE]) };
         let mut buf = Vec::new();
         write_entry_hex(&mut buf, &entry).unwrap();
-        assert_eq!(buf, b"0000000000000100 0000019c099fe600 cafe\n");
+        let expected_hex = format!("{TS_2026_NS:016x} cafe\n");
+        assert_eq!(String::from_utf8(buf).unwrap(), expected_hex);
     }
 }

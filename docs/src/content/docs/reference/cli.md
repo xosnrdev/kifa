@@ -46,8 +46,6 @@ Query stored log entries and print to stdout.
 
 | Flag                 | Description                                 | Default |
 | -------------------- | ------------------------------------------- | ------- |
-| `--from-lsn <N>`     | Start from LSN (inclusive)                  |         |
-| `--to-lsn <N>`       | End at LSN (inclusive)                      |         |
 | `--from-time <TIME>` | Filter from time                            |         |
 | `--to-time <TIME>`   | Filter until time                           |         |
 | `-f, --format <FMT>` | Output format: `text`, `json`, `csv`, `hex` | `text`  |
@@ -65,8 +63,6 @@ Export log entries to a file. Writes are atomic.
 | Flag                  | Description                                 | Default  |
 | --------------------- | ------------------------------------------- | -------- |
 | `-o, --output <PATH>` | Output file path                            | Required |
-| `--from-lsn <N>`      | Start from LSN (inclusive)                  |          |
-| `--to-lsn <N>`        | End at LSN (inclusive)                      |          |
 | `--from-time <TIME>`  | Filter from time                            |          |
 | `--to-time <TIME>`    | Filter until time                           |          |
 | `-f, --format <FMT>`  | Output format: `text`, `json`, `csv`, `hex` | `json`   |
@@ -78,8 +74,7 @@ Print storage statistics to stdout. Takes no additional flags beyond the global 
 Output includes:
 
 - Total entry count
-- SSTable count and checkpoint LSN
+- SSTable count and checkpoint timestamp
 - Memtable entry count
 - Current flush mode
 - Time range of stored entries
-- LSN gap detection

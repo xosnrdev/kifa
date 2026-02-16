@@ -26,17 +26,15 @@ const MAX_ENTRY_SIZE: usize = MEBI;
 const MAGIC_TRAILER: u64 = 0x1405_7B7E_F767_814F;
 const ENTRY_HEADER_SIZE: usize = size_of::<EntryHeader>();
 const ENTRY_FOOTER_SIZE: usize = size_of::<EntryFooter>();
-const LSN_SIZE: usize = size_of::<u64>();
 const TIMESTAMP_SIZE: usize = size_of::<u64>();
-const ENTRY_OVERHEAD: usize = ENTRY_HEADER_SIZE + LSN_SIZE + TIMESTAMP_SIZE + ENTRY_FOOTER_SIZE;
+const ENTRY_OVERHEAD: usize = ENTRY_HEADER_SIZE + TIMESTAMP_SIZE + ENTRY_FOOTER_SIZE;
 const MAX_WRITE_BUF_SIZE: usize = (MAX_ENTRY_SIZE + ENTRY_OVERHEAD).next_multiple_of(SECTOR_SIZE);
 
 const _: () = {
     assert!(ENTRY_HEADER_SIZE == 8);
     assert!(ENTRY_FOOTER_SIZE == 16);
-    assert!(LSN_SIZE == 8);
     assert!(TIMESTAMP_SIZE == 8);
-    assert!(ENTRY_OVERHEAD == 40);
+    assert!(ENTRY_OVERHEAD == 32);
     assert!(MAX_WRITE_BUF_SIZE == 1_052_672);
     assert!(SEGMENT_SIZE.is_multiple_of(SECTOR_SIZE));
 };
@@ -84,7 +82,7 @@ struct EntryHeader {
 
 impl EntryHeader {
     fn new(data_len: usize) -> Self {
-        let length = (LSN_SIZE + TIMESTAMP_SIZE + data_len + ENTRY_FOOTER_SIZE) as u32;
+        let length = (TIMESTAMP_SIZE + data_len + ENTRY_FOOTER_SIZE) as u32;
         let mut header = Self { length, header_crc: 0 };
         header.header_crc = header.compute_crc();
         header
@@ -122,25 +120,16 @@ struct EntryFooter {
 }
 
 impl EntryFooter {
-    fn new(lsn: u64, timestamp_ms: u64, data: &[u8]) -> Self {
+    fn new(timestamp_ns: u64, data: &[u8]) -> Self {
         let mut hasher = crc32fast::Hasher::new();
-        // Coalesces lsn and timestamp into one 16-byte update to halve
-        // the per-entry hasher state finalization overhead.
-        let mut prefix = [0; 16];
-        prefix[..8].copy_from_slice(&lsn.to_le_bytes());
-        prefix[8..16].copy_from_slice(&timestamp_ms.to_le_bytes());
-        hasher.update(&prefix);
+        hasher.update(&timestamp_ns.to_le_bytes());
         hasher.update(data);
         Self { data_crc: hasher.finalize(), padding: 0, magic: MAGIC_TRAILER }
     }
 
-    fn validate(&self, lsn: u64, timestamp_ms: u64, data: &[u8]) -> bool {
+    fn validate(&self, timestamp_ns: u64, data: &[u8]) -> bool {
         let mut hasher = crc32fast::Hasher::new();
-        // Mirrors the coalesced layout from `new` so CRC values match.
-        let mut prefix = [0; 16];
-        prefix[..8].copy_from_slice(&lsn.to_le_bytes());
-        prefix[8..16].copy_from_slice(&timestamp_ms.to_le_bytes());
-        hasher.update(&prefix);
+        hasher.update(&timestamp_ns.to_le_bytes());
         hasher.update(data);
         self.magic == MAGIC_TRAILER && self.data_crc == hasher.finalize()
     }
@@ -167,13 +156,11 @@ impl EntryFooter {
 
 /// Statistics about the write-ahead log.
 pub struct WalStats {
-    /// The LSN that will be assigned to the next appended entry.
-    pub next_lsn: u64,
+    /// The most recent timestamp assigned to an appended entry.
+    pub last_timestamp_ns: u64,
 
-    /// The highest LSN that has been fsync'd to disk.
-    ///
-    /// Entries with LSN <= this value are guaranteed durable.
-    pub last_durable_lsn: u64,
+    /// The highest timestamp that has been fsync'd to disk.
+    pub last_durable_timestamp_ns: u64,
 
     /// Current flush mode.
     pub flush_mode: FlushMode,
@@ -276,8 +263,7 @@ fn segment_name(sequence: u64) -> String {
 }
 
 pub struct RecoveredEntry {
-    pub lsn: u64,
-    pub timestamp_ms: u64,
+    pub timestamp_ns: u64,
     pub data: Arc<[u8]>,
 }
 
@@ -330,18 +316,13 @@ fn scan_segment(path: &Path) -> Result<(Vec<RecoveredEntry>, u64), Error> {
             break;
         }
 
-        let lsn_start = ENTRY_HEADER_SIZE;
-        let lsn_end = lsn_start + LSN_SIZE;
-        let lsn = u64::from_le_bytes(entry_buf.as_slice()[lsn_start..lsn_end].try_into().unwrap());
+        let ts_start = ENTRY_HEADER_SIZE;
+        let ts_end = ts_start + TIMESTAMP_SIZE;
+        let timestamp_ns =
+            u64::from_le_bytes(entry_buf.as_slice()[ts_start..ts_end].try_into().unwrap());
 
-        let timestamp_start = lsn_end;
-        let timestamp_end = timestamp_start + TIMESTAMP_SIZE;
-        let timestamp_ms = u64::from_le_bytes(
-            entry_buf.as_slice()[timestamp_start..timestamp_end].try_into().unwrap(),
-        );
-
-        let data_start = timestamp_end;
-        let data_len = payload_len - LSN_SIZE - TIMESTAMP_SIZE - ENTRY_FOOTER_SIZE;
+        let data_start = ts_end;
+        let data_len = payload_len - TIMESTAMP_SIZE - ENTRY_FOOTER_SIZE;
         let data_end = data_start + data_len;
         let data: Arc<[u8]> = entry_buf.as_slice()[data_start..data_end].into();
 
@@ -351,11 +332,11 @@ fn scan_segment(path: &Path) -> Result<(Vec<RecoveredEntry>, u64), Error> {
             entry_buf.as_slice()[footer_start..footer_end].try_into().unwrap(),
         );
 
-        if !footer.validate(lsn, timestamp_ms, &data) {
+        if !footer.validate(timestamp_ns, &data) {
             break;
         }
 
-        entries.push(RecoveredEntry { lsn, timestamp_ms, data });
+        entries.push(RecoveredEntry { timestamp_ns, data });
 
         offset += aligned_entry_size as u64;
     }
@@ -396,16 +377,14 @@ impl SegmentWriter {
 
     fn write_entry(
         &mut self,
-        lsn: u64,
-        timestamp_ms: u64,
+        timestamp_ns: u64,
         data: &[u8],
         write_buf: &mut AlignedBuffer,
     ) -> Result<(), Error> {
         let header = EntryHeader::new(data.len());
-        let footer = EntryFooter::new(lsn, timestamp_ms, data);
+        let footer = EntryFooter::new(timestamp_ns, data);
 
-        let total_size =
-            ENTRY_HEADER_SIZE + LSN_SIZE + TIMESTAMP_SIZE + data.len() + ENTRY_FOOTER_SIZE;
+        let total_size = ENTRY_HEADER_SIZE + TIMESTAMP_SIZE + data.len() + ENTRY_FOOTER_SIZE;
         let aligned_size = total_size.next_multiple_of(SECTOR_SIZE);
 
         if aligned_size > self.remaining_space() {
@@ -422,10 +401,7 @@ impl SegmentWriter {
         buf[pos..pos + ENTRY_HEADER_SIZE].copy_from_slice(&header.as_bytes());
         pos += ENTRY_HEADER_SIZE;
 
-        buf[pos..pos + LSN_SIZE].copy_from_slice(&lsn.to_le_bytes());
-        pos += LSN_SIZE;
-
-        buf[pos..pos + TIMESTAMP_SIZE].copy_from_slice(&timestamp_ms.to_le_bytes());
+        buf[pos..pos + TIMESTAMP_SIZE].copy_from_slice(&timestamp_ns.to_le_bytes());
         pos += TIMESTAMP_SIZE;
 
         buf[pos..pos + data.len()].copy_from_slice(data);
@@ -460,18 +436,33 @@ struct WalWriter {
 }
 
 impl WalWriter {
-    fn write_entry(&mut self, lsn: u64, timestamp_ms: u64, data: &[u8]) -> Result<(), Error> {
-        self.segment.write_entry(lsn, timestamp_ms, data, &mut self.write_buf)
+    fn write_entry(&mut self, timestamp_ns: u64, data: &[u8]) -> Result<(), Error> {
+        self.segment.write_entry(timestamp_ns, data, &mut self.write_buf)
+    }
+}
+
+fn generate_timestamp_ns(last: &AtomicU64) -> u64 {
+    let now_ns = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64);
+    loop {
+        let prev = last.load(Ordering::SeqCst);
+        let next = if now_ns > prev { now_ns } else { prev + 1 };
+        if last.compare_exchange(prev, next, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+            return next;
+        }
     }
 }
 
 pub struct Wal {
     dir: PathBuf,
     writer: Mutex<WalWriter>,
-    next_lsn: AtomicU64,
+    /// Advances before data reaches disk,
+    /// so callers can generate the next timestamp without waiting for fsync.
+    last_timestamp_ns: AtomicU64,
     flush_mode: AtomicU8,
     pending_syncs: AtomicU64,
-    last_durable_lsn: AtomicU64,
+    /// Lags behind `last_timestamp_ns` because it updates only after fsync,
+    /// bounding data-loss exposure.
+    last_durable_timestamp_ns: AtomicU64,
 }
 
 impl Wal {
@@ -479,11 +470,11 @@ impl Wal {
         fs::create_dir_all(dir)?;
 
         let segments = discover_segments(dir)?;
-        let (next_lsn, writer) = if segments.is_empty() {
+        let (max_timestamp_ns, writer) = if segments.is_empty() {
             let writer = SegmentWriter::new(dir, 0)?;
-            (1, writer)
+            (0, writer)
         } else {
-            let mut max_lsn = 0;
+            let mut max_ts = 0;
             let mut last_segment_path = None;
             let mut last_segment_seq = 0;
             let mut last_segment_offset = 0;
@@ -491,9 +482,9 @@ impl Wal {
             for path in &segments {
                 let (entries, offset) = scan_segment(path)?;
                 if let Some(entry) = entries.last()
-                    && entry.lsn >= max_lsn
+                    && entry.timestamp_ns >= max_ts
                 {
-                    max_lsn = entry.lsn;
+                    max_ts = entry.timestamp_ns;
                     last_segment_path = Some(path.clone());
                     last_segment_offset = offset;
 
@@ -516,10 +507,8 @@ impl Wal {
                 SegmentWriter::open_existing(first_segment, seq, 0)?
             };
 
-            (max_lsn + 1, writer)
+            (max_ts, writer)
         };
-
-        let last_durable = next_lsn.saturating_sub(1);
 
         Ok(Self {
             dir: dir.to_path_buf(),
@@ -527,21 +516,19 @@ impl Wal {
                 segment: writer,
                 write_buf: AlignedBuffer::new_zeroed(MAX_WRITE_BUF_SIZE),
             }),
-            next_lsn: AtomicU64::new(next_lsn),
+            last_timestamp_ns: AtomicU64::new(max_timestamp_ns),
             flush_mode: AtomicU8::new(FlushMode::Cautious as u8),
             pending_syncs: AtomicU64::new(0),
-            last_durable_lsn: AtomicU64::new(last_durable),
+            last_durable_timestamp_ns: AtomicU64::new(max_timestamp_ns),
         })
     }
 
-    pub fn append(&self, data: &[u8]) -> Result<(u64, u64), Error> {
+    pub fn append(&self, data: &[u8]) -> Result<u64, Error> {
         if data.len() > MAX_ENTRY_SIZE {
             return Err(Error::EntryTooLarge { size: data.len(), max: MAX_ENTRY_SIZE });
         }
 
-        let lsn = self.next_lsn.fetch_add(1, Ordering::SeqCst);
-        let timestamp_ms =
-            SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+        let timestamp_ns = generate_timestamp_ns(&self.last_timestamp_ns);
         let mut writer = self.writer.lock().unwrap_or_else(sync::PoisonError::into_inner);
 
         let total_size = ENTRY_OVERHEAD + data.len();
@@ -554,11 +541,11 @@ impl Wal {
             writer.segment = SegmentWriter::new(&self.dir, new_seq)?;
         }
 
-        writer.write_entry(lsn, timestamp_ms, data)?;
+        writer.write_entry(timestamp_ns, data)?;
 
         self.sync_for_mode(&writer.segment);
 
-        Ok((lsn, timestamp_ms))
+        Ok(timestamp_ns)
     }
 
     #[cfg(target_os = "linux")]
@@ -590,16 +577,14 @@ impl Wal {
         writer.segment.sync();
         self.pending_syncs.store(0, Ordering::SeqCst);
 
-        let current = self.next_lsn.load(Ordering::SeqCst);
-        if current > 1 {
-            self.last_durable_lsn.store(current - 1, Ordering::SeqCst);
-        }
+        let last = self.last_timestamp_ns.load(Ordering::SeqCst);
+        self.last_durable_timestamp_ns.store(last, Ordering::SeqCst);
     }
 
     pub fn stats(&self) -> WalStats {
         WalStats {
-            next_lsn: self.next_lsn.load(Ordering::SeqCst),
-            last_durable_lsn: self.last_durable_lsn.load(Ordering::SeqCst),
+            last_timestamp_ns: self.last_timestamp_ns.load(Ordering::SeqCst),
+            last_durable_timestamp_ns: self.last_durable_timestamp_ns.load(Ordering::SeqCst),
             flush_mode: FlushMode::try_from(self.flush_mode.load(Ordering::Acquire)).unwrap(),
         }
     }
@@ -611,7 +596,7 @@ impl Wal {
         }
     }
 
-    pub fn truncate_log(&self, checkpoint_lsn: u64) -> Result<usize, Error> {
+    pub fn truncate_log(&self, checkpoint_timestamp_ns: u64) -> Result<usize, Error> {
         let segments = discover_segments(&self.dir)?;
         let mut deleted_count = 0;
 
@@ -628,9 +613,9 @@ impl Wal {
             }
 
             let (entries, _) = scan_segment(&path)?;
-            let max_lsn_in_segment = entries.iter().map(|e| e.lsn).max().unwrap_or_default();
+            let max_ts = entries.iter().map(|e| e.timestamp_ns).max().unwrap_or_default();
 
-            if max_lsn_in_segment <= checkpoint_lsn {
+            if max_ts <= checkpoint_timestamp_ns {
                 fs::remove_file(&path)?;
                 deleted_count += 1;
             }
@@ -639,7 +624,7 @@ impl Wal {
         if deleted_count > 0 {
             sync_dir_path(&self.dir)?;
             log::debug!(
-                "WAL truncated: {deleted_count} segments removed, checkpoint LSN {checkpoint_lsn}"
+                "WAL truncated: {deleted_count} segments removed, checkpoint timestamp {checkpoint_timestamp_ns}"
             );
         }
 
@@ -667,31 +652,31 @@ mod tests {
 
     struct RecoveryReport {
         recovered_count: usize,
-        first_lsn: Option<u64>,
-        last_lsn: Option<u64>,
+        first_timestamp_ns: Option<u64>,
+        last_timestamp_ns: Option<u64>,
     }
 
     fn recover(dir: &Path) -> Result<RecoveryReport, Error> {
         let segments = discover_segments(dir)?;
 
         let mut recovered_count = 0;
-        let mut first_lsn = None;
-        let mut last_lsn = None;
+        let mut first_timestamp_ns = None;
+        let mut last_timestamp_ns = None;
 
         for path in segments {
             let (entries, _) = scan_segment(&path)?;
             recovered_count += entries.len();
             if let Some(entry) = entries.first()
-                && first_lsn.is_none()
+                && first_timestamp_ns.is_none()
             {
-                first_lsn = Some(entry.lsn);
+                first_timestamp_ns = Some(entry.timestamp_ns);
             }
             if let Some(entry) = entries.last() {
-                last_lsn = Some(entry.lsn);
+                last_timestamp_ns = Some(entry.timestamp_ns);
             }
         }
 
-        Ok(RecoveryReport { recovered_count, first_lsn, last_lsn })
+        Ok(RecoveryReport { recovered_count, first_timestamp_ns, last_timestamp_ns })
     }
 
     #[test]
@@ -707,37 +692,36 @@ mod tests {
 
     #[test]
     fn test_entry_footer_validation() {
-        let lsn = 42;
-        let timestamp_ms = 1000;
+        let timestamp_ns = 1_000_000_000;
         let data = b"foo bar";
-        let footer = EntryFooter::new(lsn, timestamp_ms, data);
-        assert!(footer.validate(lsn, timestamp_ms, data));
-        assert!(!footer.validate(lsn, timestamp_ms, b"bar foo"));
-        assert!(!footer.validate(99, timestamp_ms, data));
-        assert!(!footer.validate(lsn, 9999, data));
+        let footer = EntryFooter::new(timestamp_ns, data);
+        assert!(footer.validate(timestamp_ns, data));
+        assert!(!footer.validate(timestamp_ns, b"bar foo"));
+        assert!(!footer.validate(9999, data));
     }
 
     #[test]
     fn test_wal_reopen() {
         let dir = TempDir::new().unwrap();
+        let ts_before_reopen;
 
         {
             let wal = Wal::open(dir.path()).unwrap();
             wal.append(b"foo").unwrap();
-            wal.append(b"bar").unwrap();
+            ts_before_reopen = wal.append(b"bar").unwrap();
             wal.sync();
         }
 
         {
             let wal = Wal::open(dir.path()).unwrap();
-            let (lsn, _) = wal.append(b"baz").unwrap();
-            assert_eq!(lsn, 3);
+            let ts = wal.append(b"baz").unwrap();
+            assert!(ts > ts_before_reopen);
             wal.sync();
         }
 
         let report = recover(dir.path()).unwrap();
         assert_eq!(report.recovered_count, 3);
-        assert_eq!(report.last_lsn, Some(3));
+        assert!(report.last_timestamp_ns.is_some());
     }
 
     #[test]
@@ -771,19 +755,19 @@ mod tests {
     }
 
     #[test]
-    fn test_recovery_report_first_lsn() {
+    fn test_recovery_report_timestamps() {
         let dir = TempDir::new().unwrap();
         let wal = Wal::open(dir.path()).unwrap();
 
-        wal.append(b"foo").unwrap();
+        let first_ts = wal.append(b"foo").unwrap();
         wal.append(b"bar").unwrap();
-        wal.append(b"baz").unwrap();
+        let last_ts = wal.append(b"baz").unwrap();
         wal.sync();
         drop(wal);
 
         let report = recover(dir.path()).unwrap();
-        assert_eq!(report.first_lsn, Some(1));
-        assert_eq!(report.last_lsn, Some(3));
+        assert_eq!(report.first_timestamp_ns, Some(first_ts));
+        assert_eq!(report.last_timestamp_ns, Some(last_ts));
         assert_eq!(report.recovered_count, 3);
     }
 
@@ -793,8 +777,8 @@ mod tests {
         let wal = Wal::open(dir.path()).unwrap();
 
         let stats = wal.stats();
-        assert_eq!(stats.next_lsn, 1);
-        assert_eq!(stats.last_durable_lsn, 0);
+        assert_eq!(stats.last_timestamp_ns, 0);
+        assert_eq!(stats.last_durable_timestamp_ns, 0);
         assert_eq!(stats.flush_mode, FlushMode::Cautious);
     }
 
@@ -804,12 +788,12 @@ mod tests {
         let wal = Wal::open(dir.path()).unwrap();
 
         wal.append(b"foo").unwrap();
-        wal.append(b"bar").unwrap();
+        let last_ts = wal.append(b"bar").unwrap();
         wal.sync();
 
         let stats = wal.stats();
-        assert_eq!(stats.next_lsn, 3);
-        assert_eq!(stats.last_durable_lsn, 2);
+        assert_eq!(stats.last_timestamp_ns, last_ts);
+        assert_eq!(stats.last_durable_timestamp_ns, last_ts);
     }
 
     #[test]
@@ -825,19 +809,20 @@ mod tests {
     #[test]
     fn test_wal_stats_after_reopen() {
         let dir = TempDir::new().unwrap();
+        let last_ts;
 
         {
             let wal = Wal::open(dir.path()).unwrap();
             wal.append(b"foo").unwrap();
-            wal.append(b"bar").unwrap();
+            last_ts = wal.append(b"bar").unwrap();
             wal.sync();
         }
 
         {
             let wal = Wal::open(dir.path()).unwrap();
             let stats = wal.stats();
-            assert_eq!(stats.next_lsn, 3);
-            assert_eq!(stats.last_durable_lsn, 2);
+            assert_eq!(stats.last_timestamp_ns, last_ts);
+            assert_eq!(stats.last_durable_timestamp_ns, last_ts);
         }
     }
 
@@ -852,7 +837,7 @@ mod tests {
 
         assert_eq!(wal.truncate_log(0).unwrap(), 0, "No segments should be deleted");
 
-        assert_eq!(wal.truncate_log(1000).unwrap(), 0, "Active segment should not be deleted");
+        assert_eq!(wal.truncate_log(u64::MAX).unwrap(), 0, "Active segment should not be deleted");
 
         assert_eq!(discover_segments(dir.path()).unwrap().len(), 1);
     }
@@ -864,16 +849,19 @@ mod tests {
     )]
     fn test_truncate_deletes_old_segments() {
         let dir = TempDir::new().unwrap();
+        let first_segment_max_ts;
 
         {
             let wal = Wal::open(dir.path()).unwrap();
             let entry_size = SECTOR_SIZE - ENTRY_OVERHEAD;
             let data = vec![0; entry_size];
             let entries_per_segment = SEGMENT_SIZE / SECTOR_SIZE;
+            let mut last_ts = 0;
 
             for _ in 0..entries_per_segment {
-                wal.append(&data).unwrap();
+                last_ts = wal.append(&data).unwrap();
             }
+            first_segment_max_ts = last_ts;
             wal.sync();
 
             wal.append(b"foo").unwrap();
@@ -885,9 +873,7 @@ mod tests {
 
         {
             let wal = Wal::open(dir.path()).unwrap();
-
-            let first_segment_max_lsn = (SEGMENT_SIZE / SECTOR_SIZE) as u64;
-            let deleted = wal.truncate_log(first_segment_max_lsn).unwrap();
+            let deleted = wal.truncate_log(first_segment_max_ts).unwrap();
             assert_eq!(deleted, 1);
         }
 
@@ -904,17 +890,17 @@ mod tests {
         }
 
         let segments = discover_segments(dir.path()).unwrap();
-        assert_eq!(segments.len(), 1, "There should be one segment file present");
+        assert_eq!(segments.len(), 1);
 
         let wal = Wal::open(dir.path()).unwrap();
 
-        let (lsn, _) = wal.append(b"after restart").unwrap();
+        let ts = wal.append(b"after restart").unwrap();
 
-        assert_eq!(lsn, 1, "LSN should start at 1 after reopening empty segment");
+        assert!(ts > 0);
         wal.sync();
 
         let report = recover(dir.path()).unwrap();
         assert_eq!(report.recovered_count, 1);
-        assert_eq!(report.first_lsn, Some(1));
+        assert_eq!(report.first_timestamp_ns, Some(ts));
     }
 }

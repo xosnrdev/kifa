@@ -14,21 +14,21 @@ fn test_open_creates_directory() {
 
     assert!(engine_dir.exists());
     assert_eq!(report.wal_entries_replayed, 0);
-    assert_eq!(report.checkpoint_lsn, 0);
+    assert_eq!(report.checkpoint_timestamp_ns, 0);
     assert_eq!(report.sstable_count, 0);
     drop(engine);
 }
 
 #[test]
-fn test_append_assigns_lsn_and_populates_memtable() {
+fn test_append_assigns_timestamp_and_populates_memtable() {
     let dir = tempdir().unwrap();
     let (engine, _) = StorageEngine::open(dir.path(), Config::default()).unwrap();
 
-    let lsn1 = engine.append(b"first").unwrap();
-    let lsn2 = engine.append(b"second").unwrap();
+    let ts1 = engine.append(b"first").unwrap();
+    let ts2 = engine.append(b"second").unwrap();
 
-    assert_eq!(lsn1, 1);
-    assert_eq!(lsn2, 2);
+    assert!(ts1 > 0);
+    assert!(ts2 > ts1);
 
     let stats = engine.stats();
     assert_eq!(stats.memtable_entry_count, 2);
@@ -48,8 +48,8 @@ fn test_flush_creates_sstable() {
     assert!(info.is_some());
     let info = info.unwrap();
     assert_eq!(info.entry_count, 2);
-    assert_eq!(info.min_lsn, 1);
-    assert_eq!(info.max_lsn, 2);
+    assert!(info.min_timestamp_ns > 0);
+    assert!(info.max_timestamp_ns >= info.min_timestamp_ns);
     assert!(info.path.exists());
 }
 
@@ -65,38 +65,41 @@ fn test_flush_empty_memtable_returns_none() {
 #[test]
 fn test_recovery_replays_wal() {
     let dir = tempdir().unwrap();
+    let ts1;
+    let ts2;
 
     {
         let (engine, _) = StorageEngine::open(dir.path(), Config::default()).unwrap();
-        engine.append(b"entry1").unwrap();
-        engine.append(b"entry2").unwrap();
+        ts1 = engine.append(b"entry1").unwrap();
+        ts2 = engine.append(b"entry2").unwrap();
     }
 
     let (engine, report) = StorageEngine::open(dir.path(), Config::default()).unwrap();
 
     assert_eq!(report.wal_entries_replayed, 2);
-    assert_eq!(report.first_replayed_lsn, Some(1));
-    assert_eq!(report.last_replayed_lsn, Some(2));
+    assert_eq!(report.first_replayed_timestamp_ns, Some(ts1));
+    assert_eq!(report.last_replayed_timestamp_ns, Some(ts2));
     assert_eq!(engine.stats().memtable_entry_count, 2);
 }
 
 #[test]
 fn test_recovery_skips_checkpointed_entries() {
     let dir = tempdir().unwrap();
+    let ts3;
 
     {
         let (engine, _) = StorageEngine::open(dir.path(), Config::default()).unwrap();
         engine.append(b"entry1").unwrap();
         engine.append(b"entry2").unwrap();
         engine.flush().unwrap();
-        engine.append(b"entry3").unwrap();
+        ts3 = engine.append(b"entry3").unwrap();
     }
 
     let (engine, report) = StorageEngine::open(dir.path(), Config::default()).unwrap();
 
-    assert_eq!(report.checkpoint_lsn, 2);
+    assert!(report.checkpoint_timestamp_ns > 0);
     assert_eq!(report.wal_entries_replayed, 1);
-    assert_eq!(report.first_replayed_lsn, Some(3));
+    assert_eq!(report.first_replayed_timestamp_ns, Some(ts3));
     assert_eq!(engine.stats().memtable_entry_count, 1);
     assert_eq!(engine.stats().sstable_count, 1);
 }
@@ -137,7 +140,7 @@ fn test_stats_reflect_state() {
     let initial = engine.stats();
     assert_eq!(initial.memtable_entry_count, 0);
     assert_eq!(initial.sstable_count, 0);
-    assert_eq!(initial.checkpoint_lsn, 0);
+    assert_eq!(initial.checkpoint_timestamp_ns, 0);
 
     engine.append(b"data").unwrap();
     let after_append = engine.stats();
@@ -147,7 +150,7 @@ fn test_stats_reflect_state() {
     let after_flush = engine.stats();
     assert_eq!(after_flush.memtable_entry_count, 0);
     assert_eq!(after_flush.sstable_count, 1);
-    assert_eq!(after_flush.checkpoint_lsn, 1);
+    assert!(after_flush.checkpoint_timestamp_ns > 0);
 }
 
 #[test]
@@ -169,17 +172,17 @@ fn test_get_returns_appended_entry_r1() {
     let dir = tempdir().unwrap();
     let (engine, _) = StorageEngine::open(dir.path(), Config::default()).unwrap();
 
-    let lsn = engine.append(b"test_data").unwrap();
+    let ts = engine.append(b"test_data").unwrap();
 
-    let entry = engine.get(lsn).unwrap();
+    let entry = engine.get(ts).unwrap();
     assert!(entry.is_some());
     let entry = entry.unwrap();
-    assert_eq!(entry.lsn, lsn);
+    assert_eq!(entry.timestamp_ns, ts);
     assert_eq!(&*entry.data, b"test_data");
 }
 
 #[test]
-fn test_get_returns_none_for_nonexistent_lsn() {
+fn test_get_returns_none_for_nonexistent_timestamp() {
     let dir = tempdir().unwrap();
     let (engine, _) = StorageEngine::open(dir.path(), Config::default()).unwrap();
 
@@ -194,10 +197,10 @@ fn test_get_reads_from_sstable_r1() {
     let dir = tempdir().unwrap();
     let (engine, _) = StorageEngine::open(dir.path(), Config::default()).unwrap();
 
-    let lsn1 = engine.append(b"flushed_data").unwrap();
+    let ts = engine.append(b"flushed_data").unwrap();
     engine.flush().unwrap();
 
-    let entry = engine.get(lsn1).unwrap();
+    let entry = engine.get(ts).unwrap();
     assert!(entry.is_some());
     assert_eq!(&*entry.unwrap().data, b"flushed_data");
 }
@@ -220,8 +223,9 @@ fn test_entries_merged_across_flush_r2() {
     let entries: Vec<_> = engine.entries().unwrap().collect();
     assert_eq!(entries.len(), 5);
 
-    let lsns: Vec<_> = entries.iter().map(|e| e.lsn).collect();
-    assert_eq!(lsns, vec![1, 2, 3, 4, 5]);
+    for window in entries.windows(2) {
+        assert!(window[0].timestamp_ns < window[1].timestamp_ns);
+    }
 }
 
 #[test]
@@ -252,10 +256,11 @@ fn test_scan_across_sstable_and_memtable() {
     engine.append(b"in_memtable").unwrap();
     engine.append(b"in_memtable").unwrap();
 
-    let scanned = engine.scan(2, 3).unwrap();
+    let ts: Vec<_> = engine.entries().unwrap().map(|e| e.timestamp_ns).collect();
+    let scanned = engine.scan(ts[1], ts[2]).unwrap();
     assert_eq!(scanned.len(), 2);
-    assert_eq!(scanned[0].lsn, 2);
-    assert_eq!(scanned[1].lsn, 3);
+    assert_eq!(scanned[0].timestamp_ns, ts[1]);
+    assert_eq!(scanned[1].timestamp_ns, ts[2]);
 }
 
 #[test]
@@ -263,12 +268,12 @@ fn test_read_idempotency_r5() {
     let dir = tempdir().unwrap();
     let (engine, _) = StorageEngine::open(dir.path(), Config::default()).unwrap();
 
-    engine.append(b"data").unwrap();
+    let ts = engine.append(b"data").unwrap();
     engine.flush().unwrap();
 
-    let read1 = engine.get(1).unwrap();
-    let read2 = engine.get(1).unwrap();
-    let read3 = engine.get(1).unwrap();
+    let read1 = engine.get(ts).unwrap();
+    let read2 = engine.get(ts).unwrap();
+    let read3 = engine.get(ts).unwrap();
 
     assert_eq!(read1, read2);
     assert_eq!(read2, read3);
@@ -293,9 +298,10 @@ fn test_crash_recovery_reads_only_durable_r6() {
 
     let entries: Vec<_> = engine.entries().unwrap().collect();
     assert_eq!(entries.len(), 3);
-    assert_eq!(entries[0].lsn, 1);
-    assert_eq!(entries[1].lsn, 2);
-    assert_eq!(entries[2].lsn, 3);
+
+    for window in entries.windows(2) {
+        assert!(window[0].timestamp_ns < window[1].timestamp_ns);
+    }
 }
 
 #[test]
@@ -307,13 +313,13 @@ fn test_reads_do_not_block_writes_r7() {
 
     let snapshot = engine.snapshot();
 
-    let lsn2 = engine.append(b"after_snapshot").unwrap();
-    assert_eq!(lsn2, 2);
+    let ts2 = engine.append(b"after_snapshot").unwrap();
+    assert!(ts2 > 0);
 
     let _ = snapshot.merge_iter().unwrap().collect::<Vec<_>>();
 
-    let lsn3 = engine.append(b"after_read").unwrap();
-    assert_eq!(lsn3, 3);
+    let ts3 = engine.append(b"after_read").unwrap();
+    assert!(ts3 > ts2);
 }
 
 #[test]
@@ -333,9 +339,9 @@ fn test_no_duplicate_entries_r8() {
     let entries: Vec<_> = engine.entries().unwrap().collect();
     assert_eq!(entries.len(), 10);
 
-    let lsns: Vec<_> = entries.iter().map(|e| e.lsn).collect();
-    let unique_lsns: HashSet<_> = lsns.iter().copied().collect();
-    assert_eq!(lsns.len(), unique_lsns.len());
+    let timestamps: Vec<_> = entries.iter().map(|e| e.timestamp_ns).collect();
+    let unique_timestamps: HashSet<_> = timestamps.iter().copied().collect();
+    assert_eq!(timestamps.len(), unique_timestamps.len());
 }
 
 #[test]
@@ -348,7 +354,7 @@ fn test_empty_engine_operations() {
     let entries: Vec<_> = engine.entries().unwrap().collect();
     assert!(entries.is_empty());
 
-    let scanned = engine.scan(1, 100).unwrap();
+    let scanned = engine.scan(1, u64::MAX).unwrap();
     assert!(scanned.is_empty());
 }
 

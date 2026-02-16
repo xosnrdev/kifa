@@ -11,8 +11,8 @@ The `query` command retrieves stored entries and prints them to stdout. Filter b
 
 | Flag          | Description                | Example                      |
 | ------------- | -------------------------- | ---------------------------- |
-| `--from-time` | Filter from time           | `--from-time 1h`             |
-| `--to-time`   | Filter until time          | `--to-time "2026-01-30"`     |
+| `--from`      | Filter from time           | `--from 1h`                  |
+| `--to`        | Filter until time          | `--to "2026-01-30"`          |
 | `--format`    | Output format              | `text`, `json`, `csv`, `hex` |
 
 Without filters, `query` returns all entries.
@@ -22,17 +22,17 @@ Without filters, `query` returns all entries.
 <Tabs>
 <TabItem label="Relative">
 ```bash title="Terminal"
-kifa query -d ./data --from-time 1h      # Last hour
-kifa query -d ./data --from-time 30m     # Last 30 minutes
-kifa query -d ./data --from-time 2d      # Last 2 days
-kifa query -d ./data --from-time 1h30m   # Last 1.5 hours
+kifa query -d ./data --from 1h      # Last hour
+kifa query -d ./data --from 30m     # Last 30 minutes
+kifa query -d ./data --from 2d      # Last 2 days
+kifa query -d ./data --from 1h30m   # Last 1.5 hours
 ```
 </TabItem>
 <TabItem label="Absolute">
 ```bash title="Terminal"
-kifa query -d ./data --from-time "2026-01-29 12:00:00"
-kifa query -d ./data --from-time "2026-01-29T12:00:00Z"
-kifa query -d ./data --from-time "2026-01-29"             # Midnight
+kifa query -d ./data --from "2026-01-29 12:00:00"
+kifa query -d ./data --from "2026-01-29T12:00:00Z"
+kifa query -d ./data --from "2026-01-29"             # Midnight
 ```
 </TabItem>
 </Tabs>
@@ -84,5 +84,5 @@ kifa query -d ./data --format hex
 Time filters can be combined to select a specific window:
 
 ```bash title="Terminal"
-kifa query -d ./data --from-time 24h --to-time 1h
+kifa query -d ./data --from 24h --to 1h
 ```

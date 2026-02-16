@@ -41,7 +41,7 @@ impl fmt::Display for Error {
             Self::InvalidTimeRange { from_ns, to_ns } => {
                 write!(
                     f,
-                    "--from-time ({}) is after --to-time ({})",
+                    "--from ({}) is after --to ({})",
                     format_timestamp_ns(*from_ns),
                     format_timestamp_ns(*to_ns)
                 )
@@ -94,8 +94,8 @@ pub enum OutputFormat {
 
 pub struct QueryOptions {
     pub data_dir: PathBuf,
-    pub from_time_ns: Option<u64>,
-    pub to_time_ns: Option<u64>,
+    pub from_ns: Option<u64>,
+    pub to_ns: Option<u64>,
     pub format: OutputFormat,
     pub output_file: Option<PathBuf>,
 }
@@ -145,8 +145,8 @@ pub fn validate_time_range(from_ns: Option<u64>, to_ns: Option<u64>) -> Result<(
 }
 
 pub fn run_query(options: &QueryOptions) -> Result<u64, Error> {
-    let from_ns = options.from_time_ns.unwrap_or_default();
-    let to_ns = options.to_time_ns.unwrap_or(u64::MAX);
+    let from_ns = options.from_ns.unwrap_or_default();
+    let to_ns = options.to_ns.unwrap_or(u64::MAX);
 
     validate_time_range(Some(from_ns), Some(to_ns))?;
 
@@ -181,8 +181,8 @@ pub fn run_export(options: &QueryOptions) -> Result<u64, Error> {
     let output_path = options.output_file.as_ref().expect("output_file required for export");
     let temp_path = temp_path(output_path);
 
-    let from_ns = options.from_time_ns.unwrap_or_default();
-    let to_ns = options.to_time_ns.unwrap_or(u64::MAX);
+    let from_ns = options.from_ns.unwrap_or_default();
+    let to_ns = options.to_ns.unwrap_or(u64::MAX);
 
     validate_time_range(Some(from_ns), Some(to_ns))?;
 

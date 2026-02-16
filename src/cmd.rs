@@ -138,13 +138,13 @@ struct QueryCmd {
         long,
         help = "Filter from time: relative (1h, 30m, 2d) or absolute (YYYY-MM-DD HH:mm:ss)"
     )]
-    from_time: Option<String>,
+    from: Option<String>,
 
     #[arg(
         long,
         help = "Filter until time: relative (1h, 30m, 2d) or absolute (YYYY-MM-DD HH:mm:ss)"
     )]
-    to_time: Option<String>,
+    to: Option<String>,
 
     #[arg(short, long, value_enum, default_value = "text", help = "Output format")]
     format: OutputFormat,
@@ -156,13 +156,13 @@ struct ExportCmd {
         long,
         help = "Filter from time: relative (1h, 30m, 2d) or absolute (YYYY-MM-DD HH:mm:ss)"
     )]
-    from_time: Option<String>,
+    from: Option<String>,
 
     #[arg(
         long,
         help = "Filter until time: relative (1h, 30m, 2d) or absolute (YYYY-MM-DD HH:mm:ss)"
     )]
-    to_time: Option<String>,
+    to: Option<String>,
 
     #[arg(short, long, value_enum, default_value = "json", help = "Output format")]
     format: OutputFormat,
@@ -310,21 +310,16 @@ fn register_signals(
 }
 
 fn run_query_command(data_dir: &Path, cmd: &QueryCmd) -> Result<ExitCode> {
-    let from_time_ns = cmd
-        .from_time
-        .as_deref()
-        .map(parse_time_input)
-        .transpose()
-        .context("invalid --from-time")?;
-    let to_time_ns =
-        cmd.to_time.as_deref().map(parse_time_input).transpose().context("invalid --to-time")?;
+    let from_ns =
+        cmd.from.as_deref().map(parse_time_input).transpose().context("invalid --from")?;
+    let to_ns = cmd.to.as_deref().map(parse_time_input).transpose().context("invalid --to")?;
 
-    validate_time_range(from_time_ns, to_time_ns).context("invalid time range")?;
+    validate_time_range(from_ns, to_ns).context("invalid time range")?;
 
     let options = QueryOptions {
         data_dir: data_dir.to_path_buf(),
-        from_time_ns,
-        to_time_ns,
+        from_ns,
+        to_ns,
         format: cmd.format,
         output_file: None,
     };
@@ -335,21 +330,16 @@ fn run_query_command(data_dir: &Path, cmd: &QueryCmd) -> Result<ExitCode> {
 }
 
 fn run_export_command(data_dir: &Path, cmd: &ExportCmd) -> Result<ExitCode> {
-    let from_time_ns = cmd
-        .from_time
-        .as_deref()
-        .map(parse_time_input)
-        .transpose()
-        .context("invalid --from-time")?;
-    let to_time_ns =
-        cmd.to_time.as_deref().map(parse_time_input).transpose().context("invalid --to-time")?;
+    let from_ns =
+        cmd.from.as_deref().map(parse_time_input).transpose().context("invalid --from")?;
+    let to_ns = cmd.to.as_deref().map(parse_time_input).transpose().context("invalid --to")?;
 
-    validate_time_range(from_time_ns, to_time_ns).context("invalid time range")?;
+    validate_time_range(from_ns, to_ns).context("invalid time range")?;
 
     let options = QueryOptions {
         data_dir: data_dir.to_path_buf(),
-        from_time_ns,
-        to_time_ns,
+        from_ns,
+        to_ns,
         format: cmd.format,
         output_file: Some(cmd.output.clone()),
     };

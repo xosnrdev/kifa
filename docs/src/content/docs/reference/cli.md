@@ -46,8 +46,8 @@ Query stored log entries and print to stdout.
 
 | Flag                 | Description                                 | Default |
 | -------------------- | ------------------------------------------- | ------- |
-| `--from-time <TIME>` | Filter from time                            |         |
-| `--to-time <TIME>`   | Filter until time                           |         |
+| `--from <TIME>`      | Filter from time                            |         |
+| `--to <TIME>`        | Filter until time                           |         |
 | `-f, --format <FMT>` | Output format: `text`, `json`, `csv`, `hex` | `text`  |
 
 ### Time Format
@@ -63,8 +63,8 @@ Export log entries to a file. Writes are atomic.
 | Flag                  | Description                                 | Default  |
 | --------------------- | ------------------------------------------- | -------- |
 | `-o, --output <PATH>` | Output file path                            | Required |
-| `--from-time <TIME>`  | Filter from time                            |          |
-| `--to-time <TIME>`    | Filter until time                           |          |
+| `--from <TIME>`       | Filter from time                            |          |
+| `--to <TIME>`         | Filter until time                           |          |
 | `-f, --format <FMT>`  | Output format: `text`, `json`, `csv`, `hex` | `json`   |
 
 ## `stats`

@@ -112,11 +112,11 @@ impl Ingester {
 
         match self.engine.append(data) {
             #[cfg(feature = "crash-test")]
-            Ok(lsn) => {
+            Ok(timestamp_ns) => {
                 stats.entries_ingested += 1;
                 stats.bytes_ingested += len;
                 if self.crash_test_mode {
-                    eprintln!("DURABLE:{lsn}");
+                    eprintln!("DURABLE:{timestamp_ns}");
                 }
             }
             #[cfg(not(feature = "crash-test"))]
@@ -225,9 +225,9 @@ mod tests {
         assert_eq!(stats.bytes_ingested, 10);
         assert_eq!(stats.entries_failed, 0);
 
-        let entry = engine_read.get(1).unwrap();
-        assert!(entry.is_some());
-        assert_eq!(&*entry.unwrap().data, b"test entry");
+        let entries: Vec<_> = engine_read.entries().unwrap().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(&*entries[0].data, b"test entry");
     }
 
     #[test]
@@ -252,7 +252,7 @@ mod tests {
         assert_eq!(entries.len(), 10);
 
         for (i, entry) in entries.iter().enumerate() {
-            assert_eq!(entry.lsn, (i + 1) as u64);
+            assert!(entry.timestamp_ns > 0);
             assert_eq!(&*entry.data, format!("entry_{i}").as_bytes());
         }
     }
@@ -318,8 +318,8 @@ mod tests {
 
         assert_eq!(stats.entries_ingested, 1);
 
-        let entry = engine_read.get(1).unwrap();
-        assert!(entry.is_some());
+        let entries: Vec<_> = engine_read.entries().unwrap().collect();
+        assert_eq!(entries.len(), 1);
     }
 
     #[test]
@@ -369,9 +369,8 @@ mod tests {
         let entries: Vec<_> = engine_read.entries().unwrap().collect();
         assert_eq!(entries.len(), 100);
 
-        let lsns: Vec<_> = entries.iter().map(|e| e.lsn).collect();
-        for i in 1..=100 {
-            assert!(lsns.contains(&i), "missing lsn {i}");
+        for entry in &entries {
+            assert!(entry.timestamp_ns > 0);
         }
     }
 

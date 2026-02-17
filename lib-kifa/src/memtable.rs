@@ -1,7 +1,6 @@
 //! In-memory buffer for log entries awaiting flush to disk.
 //!
-//! Unlike key-value memtables that require sorted structures for lookups, this memtable
-//! stores entries in LSN order. A simple `Vec` suffices because entries are only appended
+//! Stores entries in timestamp order. A simple `Vec` suffices because entries are only appended
 //! and iterated sequentially during flush.
 
 use std::sync::Arc;
@@ -12,7 +11,7 @@ use crate::Entry;
 pub struct Memtable {
     entries: Vec<Entry>,
     size_bytes: usize,
-    last_lsn: u64,
+    last_timestamp_ns: u64,
     frozen: bool,
 }
 
@@ -22,13 +21,17 @@ impl Memtable {
         Self::default()
     }
 
-    pub fn insert(&mut self, lsn: u64, timestamp_ms: u64, data: Arc<[u8]>) {
+    pub fn insert(&mut self, timestamp_ns: u64, data: Arc<[u8]>) {
         assert!(!self.frozen, "insert on frozen memtable");
-        assert!(lsn > self.last_lsn, "lsn {lsn} must be greater than last_lsn {}", self.last_lsn);
+        assert!(
+            timestamp_ns > self.last_timestamp_ns,
+            "timestamp_ns {timestamp_ns} must be greater than last_timestamp_ns {}",
+            self.last_timestamp_ns
+        );
 
-        let entry = Entry { lsn, timestamp_ms, data };
+        let entry = Entry { timestamp_ns, data };
         self.size_bytes += entry.size_bytes();
-        self.last_lsn = lsn;
+        self.last_timestamp_ns = timestamp_ns;
         self.entries.push(entry);
     }
 
@@ -61,8 +64,8 @@ impl Memtable {
     }
 
     #[must_use]
-    pub const fn last_lsn(&self) -> u64 {
-        self.last_lsn
+    pub const fn last_timestamp_ns(&self) -> u64 {
+        self.last_timestamp_ns
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Entry> {
@@ -74,7 +77,7 @@ impl Memtable {
         assert!(!self.frozen, "clear on frozen memtable");
         self.entries.clear();
         self.size_bytes = 0;
-        self.last_lsn = 0;
+        self.last_timestamp_ns = 0;
     }
 }
 
@@ -88,55 +91,55 @@ mod tests {
         assert!(mt.is_empty());
         assert_eq!(mt.len(), 0);
         assert_eq!(mt.size_bytes(), 0);
-        assert_eq!(mt.last_lsn(), 0);
+        assert_eq!(mt.last_timestamp_ns(), 0);
         assert!(!mt.is_frozen());
     }
 
     #[test]
     fn test_insert_updates_state() {
         let mut mt = Memtable::new();
-        mt.insert(1, 1000, Arc::from([0xAB; 100]));
+        mt.insert(1000, Arc::from([0xAB; 100]));
 
         assert_eq!(mt.len(), 1);
-        assert_eq!(mt.size_bytes(), 2 * size_of::<u64>() + 100);
-        assert_eq!(mt.last_lsn(), 1);
+        assert_eq!(mt.size_bytes(), size_of::<u64>() + 100);
+        assert_eq!(mt.last_timestamp_ns(), 1000);
         assert!(!mt.is_empty());
     }
 
     #[test]
-    fn test_insert_multiple_monotonic_lsn() {
+    fn test_insert_multiple_monotonic_timestamps() {
         let mut mt = Memtable::new();
-        mt.insert(1, 1000, Arc::from([0x01; 10]));
-        mt.insert(5, 2000, Arc::from([0x05; 20]));
-        mt.insert(100, 3000, Arc::from([0x64; 30]));
+        mt.insert(1000, Arc::from([0x01; 10]));
+        mt.insert(2000, Arc::from([0x05; 20]));
+        mt.insert(3000, Arc::from([0x64; 30]));
 
         assert_eq!(mt.len(), 3);
-        assert_eq!(mt.last_lsn(), 100);
+        assert_eq!(mt.last_timestamp_ns(), 3000);
 
-        let expected_size = 3 * 2 * size_of::<u64>() + 10 + 20 + 30;
+        let expected_size = 3 * size_of::<u64>() + 10 + 20 + 30;
         assert_eq!(mt.size_bytes(), expected_size);
     }
 
     #[test]
-    #[should_panic(expected = "lsn 1 must be greater than last_lsn 5")]
-    fn test_insert_non_monotonic_lsn_panics() {
+    #[should_panic(expected = "timestamp_ns 1000 must be greater than last_timestamp_ns 2000")]
+    fn test_insert_non_monotonic_timestamp_panics() {
         let mut mt = Memtable::new();
-        mt.insert(5, 1000, Arc::from([0x05; 10]));
-        mt.insert(1, 2000, Arc::from([0x01; 10]));
+        mt.insert(2000, Arc::from([0x05; 10]));
+        mt.insert(1000, Arc::from([0x01; 10]));
     }
 
     #[test]
-    #[should_panic(expected = "lsn 5 must be greater than last_lsn 5")]
-    fn test_insert_duplicate_lsn_panics() {
+    #[should_panic(expected = "timestamp_ns 2000 must be greater than last_timestamp_ns 2000")]
+    fn test_insert_duplicate_timestamp_panics() {
         let mut mt = Memtable::new();
-        mt.insert(5, 1000, Arc::from([0x05; 10]));
-        mt.insert(5, 2000, Arc::from([0x05; 10]));
+        mt.insert(2000, Arc::from([0x05; 10]));
+        mt.insert(2000, Arc::from([0x05; 10]));
     }
 
     #[test]
     fn test_freeze_sets_frozen_flag() {
         let mut mt = Memtable::new();
-        mt.insert(1, 1000, Arc::from([0x01; 10]));
+        mt.insert(1000, Arc::from([0x01; 10]));
         mt.freeze();
 
         assert!(mt.is_frozen());
@@ -147,56 +150,56 @@ mod tests {
     fn test_insert_on_frozen_panics() {
         let mut mt = Memtable::new();
         mt.freeze();
-        mt.insert(1, 1000, Arc::from([0x01; 10]));
+        mt.insert(1000, Arc::from([0x01; 10]));
     }
 
     #[test]
-    fn test_iter_yields_lsn_order() {
+    fn test_iter_yields_timestamp_order() {
         let mut mt = Memtable::new();
-        mt.insert(10, 1000, Arc::from([0x0A]));
-        mt.insert(20, 2000, Arc::from([0x14]));
-        mt.insert(30, 3000, Arc::from([0x1E]));
+        mt.insert(1000, Arc::from([0x0A]));
+        mt.insert(2000, Arc::from([0x14]));
+        mt.insert(3000, Arc::from([0x1E]));
 
-        let lsns: Vec<_> = mt.iter().map(|e| e.lsn).collect();
-        assert_eq!(lsns, vec![10, 20, 30]);
+        let timestamps: Vec<_> = mt.iter().map(|e| e.timestamp_ns).collect();
+        assert_eq!(timestamps, vec![1000, 2000, 3000]);
     }
 
     #[test]
     fn test_entry_size_bytes() {
-        let entry = Entry { lsn: 42, timestamp_ms: 1000, data: Arc::from([0; 100]) };
-        assert_eq!(entry.size_bytes(), 2 * size_of::<u64>() + 100);
+        let entry = Entry { timestamp_ns: 1000, data: Arc::from([0; 100]) };
+        assert_eq!(entry.size_bytes(), size_of::<u64>() + 100);
     }
 
     #[test]
     fn test_clear_resets_state() {
         let mut mt = Memtable::new();
-        mt.insert(1, 1000, Arc::from([0x01; 10]));
-        mt.insert(2, 2000, Arc::from([0x02; 20]));
+        mt.insert(1000, Arc::from([0x01; 10]));
+        mt.insert(2000, Arc::from([0x02; 20]));
         mt.clear();
 
         assert!(mt.is_empty());
         assert_eq!(mt.len(), 0);
         assert_eq!(mt.size_bytes(), 0);
-        assert_eq!(mt.last_lsn(), 0);
+        assert_eq!(mt.last_timestamp_ns(), 0);
     }
 
     #[test]
     #[should_panic(expected = "clear on frozen memtable")]
     fn test_clear_on_frozen_panics() {
         let mut mt = Memtable::new();
-        mt.insert(1, 1000, Arc::from([0x01; 10]));
+        mt.insert(1000, Arc::from([0x01; 10]));
         mt.freeze();
         mt.clear();
     }
 
     #[test]
-    fn test_insert_after_clear_allows_any_lsn() {
+    fn test_insert_after_clear_allows_any_timestamp() {
         let mut mt = Memtable::new();
-        mt.insert(100, 1000, Arc::from([0x64; 10]));
+        mt.insert(100_000, Arc::from([0x64; 10]));
         mt.clear();
-        mt.insert(1, 2000, Arc::from([0x01; 10]));
+        mt.insert(1000, Arc::from([0x01; 10]));
 
-        assert_eq!(mt.last_lsn(), 1);
+        assert_eq!(mt.last_timestamp_ns(), 1000);
         assert_eq!(mt.len(), 1);
     }
 }

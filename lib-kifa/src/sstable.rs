@@ -1,8 +1,8 @@
 //! Log-ordered `SSTable` for persisting memtable flushes.
 //!
-//! Unlike key-sorted `SSTables` in `LevelDB` or `RocksDB`, entries here are ordered by LSN.
-//! This suits append-only log workloads where reads are sequential scans, not point lookups.
-//! Writes go to a temp file first; an atomic rename commits the final `SSTable` to disk.
+//! Entries are ordered by nanosecond timestamp. This suits append-only log workloads where
+//! reads are sequential scans, not point lookups. Writes go to a temp file first; an atomic
+//! rename commits the final `SSTable` to disk.
 
 use std::fs::{File, OpenOptions, remove_file};
 use std::io::{self, BufReader, BufWriter, Read, Write};
@@ -28,7 +28,7 @@ pub enum Error {
     UnsupportedVersion { found: u32, expected: u32 },
     CorruptedData,
     EmptyMemtable,
-    LsnNotMonotonic { current: u64, previous: u64 },
+    TimestampNotMonotonic { current: u64, previous: u64 },
     TempFileCleanup(io::Error),
     EntryTooLarge { size: usize, max: usize },
 }
@@ -45,8 +45,8 @@ impl fmt::Display for Error {
             }
             Self::CorruptedData => write!(f, "corrupted data"),
             Self::EmptyMemtable => write!(f, "empty memtable"),
-            Self::LsnNotMonotonic { current, previous } => {
-                write!(f, "LSN not monotonic: {current} <= {previous}")
+            Self::TimestampNotMonotonic { current, previous } => {
+                write!(f, "timestamp not monotonic: {current} <= {previous}")
             }
             Self::TempFileCleanup(e) => write!(f, "temp file cleanup failed: {e}"),
             Self::EntryTooLarge { size, max } => {
@@ -63,8 +63,8 @@ pub struct Header {
     pub magic: u64,
     pub version: u32,
     pub entry_count: u32,
-    pub min_lsn: u64,
-    pub max_lsn: u64,
+    pub min_timestamp_ns: u64,
+    pub max_timestamp_ns: u64,
 }
 
 impl Header {
@@ -73,8 +73,8 @@ impl Header {
         buf[0..8].copy_from_slice(&self.magic.to_le_bytes());
         buf[8..12].copy_from_slice(&self.version.to_le_bytes());
         buf[12..16].copy_from_slice(&self.entry_count.to_le_bytes());
-        buf[16..24].copy_from_slice(&self.min_lsn.to_le_bytes());
-        buf[24..32].copy_from_slice(&self.max_lsn.to_le_bytes());
+        buf[16..24].copy_from_slice(&self.min_timestamp_ns.to_le_bytes());
+        buf[24..32].copy_from_slice(&self.max_timestamp_ns.to_le_bytes());
         buf
     }
 
@@ -85,11 +85,11 @@ impl Header {
             ]),
             version: u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
             entry_count: u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]),
-            min_lsn: u64::from_le_bytes([
+            min_timestamp_ns: u64::from_le_bytes([
                 bytes[16], bytes[17], bytes[18], bytes[19], bytes[20], bytes[21], bytes[22],
                 bytes[23],
             ]),
-            max_lsn: u64::from_le_bytes([
+            max_timestamp_ns: u64::from_le_bytes([
                 bytes[24], bytes[25], bytes[26], bytes[27], bytes[28], bytes[29], bytes[30],
                 bytes[31],
             ]),
@@ -154,8 +154,8 @@ impl Footer {
 pub struct SstableInfo {
     pub path: PathBuf,
     pub entry_count: u32,
-    pub min_lsn: u64,
-    pub max_lsn: u64,
+    pub min_timestamp_ns: u64,
+    pub max_timestamp_ns: u64,
 }
 
 pub fn flush_memtable(memtable: &Memtable, final_path: &Path) -> Result<SstableInfo, Error> {
@@ -171,39 +171,39 @@ pub fn flush_memtable(memtable: &Memtable, final_path: &Path) -> Result<SstableI
     let mut hasher = crc32fast::Hasher::new();
 
     let mut entry_count = 0;
-    let mut min_lsn = u64::MAX;
-    let mut max_lsn = 0;
-    let mut prev_lsn = 0;
+    let mut min_timestamp_ns = u64::MAX;
+    let mut max_timestamp_ns = 0;
+    let mut prev_timestamp_ns = 0;
 
-    // Entry count and LSN range are unknown until iteration completes. Writing zeros here
+    // Entry count and timestamp range are unknown until iteration completes. Writing zeros here
     // leaves the file with an invalid magic number if a crash occurs before the final header.
     let placeholder_header = [0; HEADER_SIZE];
     writer.write_all(&placeholder_header)?;
 
     for entry in memtable.iter() {
-        if entry_count > 0 && entry.lsn <= prev_lsn {
+        if entry_count > 0 && entry.timestamp_ns <= prev_timestamp_ns {
             drop(writer);
             let _ = remove_file(&temp_path);
-            return Err(Error::LsnNotMonotonic { current: entry.lsn, previous: prev_lsn });
+            return Err(Error::TimestampNotMonotonic {
+                current: entry.timestamp_ns,
+                previous: prev_timestamp_ns,
+            });
         }
 
-        let lsn_bytes = entry.lsn.to_le_bytes();
-        let timestamp_bytes = entry.timestamp_ms.to_le_bytes();
+        let timestamp_bytes = entry.timestamp_ns.to_le_bytes();
         let length_bytes = (entry.data.len() as u32).to_le_bytes();
 
-        hasher.update(&lsn_bytes);
         hasher.update(&timestamp_bytes);
         hasher.update(&length_bytes);
         hasher.update(&entry.data);
 
-        writer.write_all(&lsn_bytes)?;
         writer.write_all(&timestamp_bytes)?;
         writer.write_all(&length_bytes)?;
         writer.write_all(&entry.data)?;
 
-        min_lsn = min_lsn.min(entry.lsn);
-        max_lsn = max_lsn.max(entry.lsn);
-        prev_lsn = entry.lsn;
+        min_timestamp_ns = min_timestamp_ns.min(entry.timestamp_ns);
+        max_timestamp_ns = max_timestamp_ns.max(entry.timestamp_ns);
+        prev_timestamp_ns = entry.timestamp_ns;
         entry_count += 1;
     }
 
@@ -213,14 +213,17 @@ pub fn flush_memtable(memtable: &Memtable, final_path: &Path) -> Result<SstableI
 
     writer.flush()?;
 
-    // BufWriter must be consumed to access the underlying File for fsync. The file is then
-    // closed and reopened so the header write starts at offset 0. Data must be durable before
-    // the header is written; otherwise a crash could leave a valid header pointing to garbage.
     let file = writer.into_inner().map_err(|e| Error::Io(e.into_error()))?;
     sync_file(&file);
     drop(file);
 
-    let header = Header { magic: MAGIC_HEADER, version: VERSION, entry_count, min_lsn, max_lsn };
+    let header = Header {
+        magic: MAGIC_HEADER,
+        version: VERSION,
+        entry_count,
+        min_timestamp_ns,
+        max_timestamp_ns,
+    };
     let mut file = OpenOptions::new().write(true).open(&temp_path)?;
     file.write_all(&header.as_bytes())?;
     sync_file(&file);
@@ -228,7 +231,12 @@ pub fn flush_memtable(memtable: &Memtable, final_path: &Path) -> Result<SstableI
 
     atomic_rename(&temp_path, final_path)?;
 
-    Ok(SstableInfo { path: final_path.to_path_buf(), entry_count, min_lsn, max_lsn })
+    Ok(SstableInfo {
+        path: final_path.to_path_buf(),
+        entry_count,
+        min_timestamp_ns,
+        max_timestamp_ns,
+    })
 }
 
 pub fn cleanup_temp_files(dir: &Path) -> Result<usize, Error> {
@@ -272,13 +280,13 @@ impl SstableReader {
     }
 
     #[cfg(test)]
-    const fn min_lsn(&self) -> u64 {
-        self.header.min_lsn
+    const fn min_timestamp_ns(&self) -> u64 {
+        self.header.min_timestamp_ns
     }
 
     #[cfg(test)]
-    const fn max_lsn(&self) -> u64 {
-        self.header.max_lsn
+    const fn max_timestamp_ns(&self) -> u64 {
+        self.header.max_timestamp_ns
     }
 
     pub fn read_entry(&mut self) -> Result<Option<Entry>, Error> {
@@ -286,16 +294,13 @@ impl SstableReader {
             return Ok(None);
         }
 
-        let mut lsn_bytes = [0; 8];
         let mut timestamp_bytes = [0; 8];
         let mut length_bytes = [0; 4];
 
-        self.reader.read_exact(&mut lsn_bytes)?;
         self.reader.read_exact(&mut timestamp_bytes)?;
         self.reader.read_exact(&mut length_bytes)?;
 
-        let lsn = u64::from_le_bytes(lsn_bytes);
-        let timestamp_ms = u64::from_le_bytes(timestamp_bytes);
+        let timestamp_ns = u64::from_le_bytes(timestamp_bytes);
         let len = u32::from_le_bytes(length_bytes) as usize;
 
         if len > MAX_ENTRY_SIZE {
@@ -305,7 +310,6 @@ impl SstableReader {
         let mut data_buf = vec![0; len];
         self.reader.read_exact(&mut data_buf)?;
 
-        self.hasher.update(&lsn_bytes);
         self.hasher.update(&timestamp_bytes);
         self.hasher.update(&length_bytes);
         self.hasher.update(&data_buf);
@@ -313,7 +317,7 @@ impl SstableReader {
         self.entries_read += 1;
 
         let data: Arc<[u8]> = data_buf.into();
-        Ok(Some(Entry { lsn, timestamp_ms, data }))
+        Ok(Some(Entry { timestamp_ns, data }))
     }
 
     #[cfg(test)]
@@ -399,8 +403,8 @@ impl Iterator for SstableIter {
 }
 
 #[must_use]
-pub fn sstable_name(min_lsn: u64, max_lsn: u64) -> String {
-    format!("{min_lsn:016x}_{max_lsn:016x}.sst")
+pub fn sstable_name(min_timestamp_ns: u64, max_timestamp_ns: u64) -> String {
+    format!("{min_timestamp_ns:016x}_{max_timestamp_ns:016x}.sst")
 }
 
 #[cfg(test)]
@@ -415,8 +419,8 @@ mod tests {
             magic: MAGIC_HEADER,
             version: VERSION,
             entry_count: 42,
-            min_lsn: 1,
-            max_lsn: 100,
+            min_timestamp_ns: 1000,
+            max_timestamp_ns: 100_000,
         };
 
         let bytes = header.as_bytes();
@@ -425,8 +429,8 @@ mod tests {
         assert_eq!(restored.magic, MAGIC_HEADER);
         assert_eq!(restored.version, VERSION);
         assert_eq!(restored.entry_count, 42);
-        assert_eq!(restored.min_lsn, 1);
-        assert_eq!(restored.max_lsn, 100);
+        assert_eq!(restored.min_timestamp_ns, 1000);
+        assert_eq!(restored.max_timestamp_ns, 100_000);
     }
 
     #[test]
@@ -441,16 +445,26 @@ mod tests {
 
     #[test]
     fn test_header_validation_invalid_magic() {
-        let header =
-            Header { magic: 0xBAD, version: VERSION, entry_count: 0, min_lsn: 0, max_lsn: 0 };
+        let header = Header {
+            magic: 0xBAD,
+            version: VERSION,
+            entry_count: 0,
+            min_timestamp_ns: 0,
+            max_timestamp_ns: 0,
+        };
 
         assert!(matches!(header.validate(), Err(Error::InvalidMagic)));
     }
 
     #[test]
     fn test_header_validation_unsupported_version() {
-        let header =
-            Header { magic: MAGIC_HEADER, version: 99, entry_count: 0, min_lsn: 0, max_lsn: 0 };
+        let header = Header {
+            magic: MAGIC_HEADER,
+            version: 99,
+            entry_count: 0,
+            min_timestamp_ns: 0,
+            max_timestamp_ns: 0,
+        };
 
         assert!(matches!(
             header.validate(),
@@ -479,24 +493,23 @@ mod tests {
         let path = temp_dir.path().join("test.sst");
 
         let mut memtable = Memtable::new();
-        memtable.insert(1, 1000, Arc::from([0xAB; 100]));
+        memtable.insert(1000, Arc::from([0xAB; 100]));
 
         let info = flush_memtable(&memtable, &path).unwrap();
 
         assert_eq!(info.entry_count, 1);
-        assert_eq!(info.min_lsn, 1);
-        assert_eq!(info.max_lsn, 1);
+        assert_eq!(info.min_timestamp_ns, 1000);
+        assert_eq!(info.max_timestamp_ns, 1000);
         assert!(path.exists());
 
         let reader = SstableReader::open(&path).unwrap();
         assert_eq!(reader.entry_count(), 1);
-        assert_eq!(reader.min_lsn(), 1);
-        assert_eq!(reader.max_lsn(), 1);
+        assert_eq!(reader.min_timestamp_ns(), 1000);
+        assert_eq!(reader.max_timestamp_ns(), 1000);
 
         let entries = reader.into_entries().unwrap();
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].lsn, 1);
-        assert_eq!(entries[0].timestamp_ms, 1000);
+        assert_eq!(entries[0].timestamp_ns, 1000);
         assert_eq!(&*entries[0].data, &vec![0xAB; 100]);
     }
 
@@ -506,22 +519,22 @@ mod tests {
         let path = temp_dir.path().join("test.sst");
 
         let mut memtable = Memtable::new();
-        memtable.insert(10, 1000, Arc::from([0x0A; 50]));
-        memtable.insert(20, 2000, Arc::from([0x14; 100]));
-        memtable.insert(30, 3000, Arc::from([0x1E; 150]));
+        memtable.insert(1000, Arc::from([0x0A; 50]));
+        memtable.insert(2000, Arc::from([0x14; 100]));
+        memtable.insert(3000, Arc::from([0x1E; 150]));
 
         let info = flush_memtable(&memtable, &path).unwrap();
 
         assert_eq!(info.entry_count, 3);
-        assert_eq!(info.min_lsn, 10);
-        assert_eq!(info.max_lsn, 30);
+        assert_eq!(info.min_timestamp_ns, 1000);
+        assert_eq!(info.max_timestamp_ns, 3000);
 
         let entries = SstableReader::open(&path).unwrap().into_entries().unwrap();
 
         assert_eq!(entries.len(), 3);
-        assert_eq!(entries[0].lsn, 10);
-        assert_eq!(entries[1].lsn, 20);
-        assert_eq!(entries[2].lsn, 30);
+        assert_eq!(entries[0].timestamp_ns, 1000);
+        assert_eq!(entries[1].timestamp_ns, 2000);
+        assert_eq!(entries[2].timestamp_ns, 3000);
         assert_eq!(entries[0].data.len(), 50);
         assert_eq!(entries[1].data.len(), 100);
         assert_eq!(entries[2].data.len(), 150);
@@ -533,7 +546,7 @@ mod tests {
         let path = temp_dir.path().join("test.sst");
 
         let mut memtable = Memtable::new();
-        memtable.insert(1, 1000, Arc::from([0x01]));
+        memtable.insert(1000, Arc::from([0x01]));
 
         flush_memtable(&memtable, &path).unwrap();
 
@@ -566,12 +579,12 @@ mod tests {
         let path = temp_dir.path().join("test.sst");
 
         let mut memtable = Memtable::new();
-        memtable.insert(1, 1000, Arc::from([0x01; 100]));
+        memtable.insert(1000, Arc::from([0x01; 100]));
 
         flush_memtable(&memtable, &path).unwrap();
 
         let mut contents = fs::read(&path).unwrap();
-        let data_offset = HEADER_SIZE + 8 + 8 + 4;
+        let data_offset = HEADER_SIZE + 8 + 4;
         contents[data_offset + 50] ^= 0xFF;
         fs::write(&path, contents).unwrap();
 
@@ -585,8 +598,8 @@ mod tests {
 
     #[test]
     fn test_sstable_name_format() {
-        let name = sstable_name(1, 100);
-        assert_eq!(name, "0000000000000001_0000000000000064.sst");
+        let name = sstable_name(1000, 100_000);
+        assert_eq!(name, "00000000000003e8_00000000000186a0.sst");
     }
 
     #[test]
@@ -597,7 +610,7 @@ mod tests {
         let mut memtable = Memtable::new();
         for i in 1..=10 {
             let data: Arc<[u8]> = std::iter::repeat_n(i as u8, (i * 10) as usize).collect();
-            memtable.insert(i, 1000 + i, data);
+            memtable.insert(i * 1000, data);
         }
 
         flush_memtable(&memtable, &path).unwrap();
@@ -613,12 +626,12 @@ mod tests {
         let path = temp_dir.path().join("test.sst");
 
         let mut memtable = Memtable::new();
-        memtable.insert(1, 1000, Arc::from([0xAB; 100]));
+        memtable.insert(1000, Arc::from([0xAB; 100]));
 
         flush_memtable(&memtable, &path).unwrap();
 
         let mut contents = fs::read(&path).unwrap();
-        let len_offset = HEADER_SIZE + 8 + 8;
+        let len_offset = HEADER_SIZE + 8;
         let huge_len = (MAX_ENTRY_SIZE + 1) as u32;
         contents[len_offset..len_offset + 4].copy_from_slice(&huge_len.to_le_bytes());
         fs::write(&path, contents).unwrap();

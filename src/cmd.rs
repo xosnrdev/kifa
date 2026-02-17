@@ -33,7 +33,7 @@ use signal_hook::flag;
 use crate::config::{self, AppConfig, PartialConfig};
 use crate::ingester::Ingester;
 use crate::query::{
-    self, OutputFormat, QueryOptions, format_timestamp_ms, parse_time_input, validate_time_range,
+    self, OutputFormat, QueryOptions, format_timestamp_ns, parse_time_input, validate_time_range,
 };
 use crate::source::{self, FileTailer, SourceRunner, StdinSource, TcpSource, UdpSource};
 
@@ -134,23 +134,17 @@ struct DaemonCmd {
 
 #[derive(Parser, Clone)]
 struct QueryCmd {
-    #[arg(long, help = "Start from this log sequence number (inclusive)")]
-    from_lsn: Option<u64>,
-
-    #[arg(long, help = "End at this log sequence number (inclusive)")]
-    to_lsn: Option<u64>,
-
     #[arg(
         long,
         help = "Filter from time: relative (1h, 30m, 2d) or absolute (YYYY-MM-DD HH:mm:ss)"
     )]
-    from_time: Option<String>,
+    from: Option<String>,
 
     #[arg(
         long,
         help = "Filter until time: relative (1h, 30m, 2d) or absolute (YYYY-MM-DD HH:mm:ss)"
     )]
-    to_time: Option<String>,
+    to: Option<String>,
 
     #[arg(short, long, value_enum, default_value = "text", help = "Output format")]
     format: OutputFormat,
@@ -158,23 +152,17 @@ struct QueryCmd {
 
 #[derive(Parser, Clone)]
 struct ExportCmd {
-    #[arg(long, help = "Start from this log sequence number (inclusive)")]
-    from_lsn: Option<u64>,
-
-    #[arg(long, help = "End at this log sequence number (inclusive)")]
-    to_lsn: Option<u64>,
-
     #[arg(
         long,
         help = "Filter from time: relative (1h, 30m, 2d) or absolute (YYYY-MM-DD HH:mm:ss)"
     )]
-    from_time: Option<String>,
+    from: Option<String>,
 
     #[arg(
         long,
         help = "Filter until time: relative (1h, 30m, 2d) or absolute (YYYY-MM-DD HH:mm:ss)"
     )]
-    to_time: Option<String>,
+    to: Option<String>,
 
     #[arg(short, long, value_enum, default_value = "json", help = "Output format")]
     format: OutputFormat,
@@ -270,19 +258,18 @@ fn print_recovery_report(report: &RecoveryReport) {
     log::info!("Recovery: {} entries replayed", report.wal_entries_replayed);
     log::info!("  SSTables: {}", report.sstable_count);
 
-    if let (Some(first), Some(last)) = (report.first_timestamp_ms, report.last_timestamp_ms) {
-        log::info!("  Time range: {} - {}", format_timestamp_ms(first), format_timestamp_ms(last));
+    if let (Some(first), Some(last)) =
+        (report.first_replayed_timestamp_ns, report.last_replayed_timestamp_ns)
+    {
+        log::info!(
+            "  Replayed time range: {} - {}",
+            format_timestamp_ns(first),
+            format_timestamp_ns(last)
+        );
     }
 
     if report.orphan_sstables_cleaned > 0 {
         log::warn!("  Orphan SSTables cleaned: {}", report.orphan_sstables_cleaned);
-    }
-
-    if !report.gaps.is_empty() {
-        log::warn!("  {} gaps in LSN sequence:", report.gaps.len());
-        for gap in &report.gaps {
-            log::warn!("    Missing: {} - {}", gap.start, gap.end);
-        }
     }
 }
 
@@ -323,23 +310,16 @@ fn register_signals(
 }
 
 fn run_query_command(data_dir: &Path, cmd: &QueryCmd) -> Result<ExitCode> {
-    let from_time_ms = cmd
-        .from_time
-        .as_deref()
-        .map(parse_time_input)
-        .transpose()
-        .context("invalid --from-time")?;
-    let to_time_ms =
-        cmd.to_time.as_deref().map(parse_time_input).transpose().context("invalid --to-time")?;
+    let from_ns =
+        cmd.from.as_deref().map(parse_time_input).transpose().context("invalid --from")?;
+    let to_ns = cmd.to.as_deref().map(parse_time_input).transpose().context("invalid --to")?;
 
-    validate_time_range(from_time_ms, to_time_ms).context("invalid time range")?;
+    validate_time_range(from_ns, to_ns).context("invalid time range")?;
 
     let options = QueryOptions {
         data_dir: data_dir.to_path_buf(),
-        from_lsn: cmd.from_lsn,
-        to_lsn: cmd.to_lsn,
-        from_time_ms,
-        to_time_ms,
+        from_ns,
+        to_ns,
         format: cmd.format,
         output_file: None,
     };
@@ -350,23 +330,16 @@ fn run_query_command(data_dir: &Path, cmd: &QueryCmd) -> Result<ExitCode> {
 }
 
 fn run_export_command(data_dir: &Path, cmd: &ExportCmd) -> Result<ExitCode> {
-    let from_time_ms = cmd
-        .from_time
-        .as_deref()
-        .map(parse_time_input)
-        .transpose()
-        .context("invalid --from-time")?;
-    let to_time_ms =
-        cmd.to_time.as_deref().map(parse_time_input).transpose().context("invalid --to-time")?;
+    let from_ns =
+        cmd.from.as_deref().map(parse_time_input).transpose().context("invalid --from")?;
+    let to_ns = cmd.to.as_deref().map(parse_time_input).transpose().context("invalid --to")?;
 
-    validate_time_range(from_time_ms, to_time_ms).context("invalid time range")?;
+    validate_time_range(from_ns, to_ns).context("invalid time range")?;
 
     let options = QueryOptions {
         data_dir: data_dir.to_path_buf(),
-        from_lsn: cmd.from_lsn,
-        to_lsn: cmd.to_lsn,
-        from_time_ms,
-        to_time_ms,
+        from_ns,
+        to_ns,
         format: cmd.format,
         output_file: Some(cmd.output.clone()),
     };

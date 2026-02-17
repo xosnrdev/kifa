@@ -1,20 +1,18 @@
 ---
 title: Querying Logs
-description: Retrieve entries by LSN range or time range in multiple output formats.
+description: Retrieve entries by time range in multiple output formats.
 ---
 
 import { Tabs, TabItem } from "@astrojs/starlight/components";
 
-The `query` command retrieves stored entries and prints them to stdout. Filter by LSN, time, or both.
+The `query` command retrieves stored entries and prints them to stdout. Filter by time range or retrieve all entries.
 
 ## Query Options
 
 | Flag          | Description                | Example                      |
 | ------------- | -------------------------- | ---------------------------- |
-| `--from-lsn`  | Start from LSN (inclusive) | `--from-lsn 100`             |
-| `--to-lsn`    | End at LSN (inclusive)     | `--to-lsn 500`               |
-| `--from-time` | Filter from time           | `--from-time 1h`             |
-| `--to-time`   | Filter until time          | `--to-time "2026-01-30"`     |
+| `--from`      | Filter from time           | `--from 1h`                  |
+| `--to`        | Filter until time          | `--to "2026-01-30"`          |
 | `--format`    | Output format              | `text`, `json`, `csv`, `hex` |
 
 Without filters, `query` returns all entries.
@@ -24,17 +22,17 @@ Without filters, `query` returns all entries.
 <Tabs>
 <TabItem label="Relative">
 ```bash title="Terminal"
-kifa query -d ./data --from-time 1h      # Last hour
-kifa query -d ./data --from-time 30m     # Last 30 minutes
-kifa query -d ./data --from-time 2d      # Last 2 days
-kifa query -d ./data --from-time 1h30m   # Last 1.5 hours
+kifa query -d ./data --from 1h      # Last hour
+kifa query -d ./data --from 30m     # Last 30 minutes
+kifa query -d ./data --from 2d      # Last 2 days
+kifa query -d ./data --from 1h30m   # Last 1.5 hours
 ```
 </TabItem>
 <TabItem label="Absolute">
 ```bash title="Terminal"
-kifa query -d ./data --from-time "2026-01-29 12:00:00"
-kifa query -d ./data --from-time "2026-01-29T12:00:00Z"
-kifa query -d ./data --from-time "2026-01-29"             # Midnight
+kifa query -d ./data --from "2026-01-29 12:00:00"
+kifa query -d ./data --from "2026-01-29T12:00:00Z"
+kifa query -d ./data --from "2026-01-29"             # Midnight
 ```
 </TabItem>
 </Tabs>
@@ -48,7 +46,7 @@ kifa query -d ./data --format text
 ```
 
 ```text title="Output"
-[1] 2026-01-31 18:30:00 UTC {"txn":"TXN-001","amount":5000}
+2026-01-31 18:30:00 UTC {"txn":"TXN-001","amount":5000}
 ```
 </TabItem>
 <TabItem label="JSON">
@@ -57,7 +55,7 @@ kifa query -d ./data --format json
 ```
 
 ```json title="Output"
-{"lsn":1,"timestamp":"2026-01-31 18:30:00 UTC","timestamp_ms":1738348200000,"data":"{...}"}
+{"timestamp":"2026-01-31 18:30:00 UTC","timestamp_ns":1738348200000000000,"data":"{...}"}
 ```
 </TabItem>
 <TabItem label="CSV">
@@ -66,8 +64,8 @@ kifa query -d ./data --format csv
 ```
 
 ```csv title="Output"
-lsn,timestamp,timestamp_ms,data
-1,"2026-01-31 18:30:00 UTC",1738348200000,"{...}"
+timestamp,timestamp_ns,data
+"2026-01-31 18:30:00 UTC",1738348200000000000,"{...}"
 ```
 </TabItem>
 <TabItem label="Hex">
@@ -76,15 +74,15 @@ kifa query -d ./data --format hex
 ```
 
 ```text title="Output"
-0000000000000001 0000019c099fe600 7b22...
+18276c2dae160000 7b22...
 ```
 </TabItem>
 </Tabs>
 
 ## Combining Filters
 
-LSN and time filters can be combined. Both conditions must be satisfied:
+Time filters can be combined to select a specific window:
 
 ```bash title="Terminal"
-kifa query -d ./data --from-lsn 100 --to-lsn 500 --from-time 24h
+kifa query -d ./data --from 24h --to 1h
 ```

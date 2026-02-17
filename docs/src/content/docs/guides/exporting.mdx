@@ -12,13 +12,13 @@ The `export` command writes entries to a file. Writes are atomic: partial export
 Export the last 24 hours as JSON:
 
 ```bash title="Terminal"
-kifa export -d ./data --from-time 24h --format json -o transactions.json
+kifa export -d ./data --from 24h --format json -o transactions.json
 ```
 
-Export a specific LSN range as CSV:
+Export a specific time range as CSV:
 
 ```bash title="Terminal"
-kifa export -d ./data --from-lsn 1 --to-lsn 1000 --format csv -o audit.csv
+kifa export -d ./data --from "2026-01-01" --to "2026-02-01" --format csv -o audit.csv
 ```
 
 ## Options
@@ -27,10 +27,8 @@ kifa export -d ./data --from-lsn 1 --to-lsn 1000 --format csv -o audit.csv
 | -------------- | -------------------------------------------- | -------- |
 | `-o, --output` | Output file path                             | Required |
 | `--format`     | Output format (`text`, `json`, `csv`, `hex`) | `json`   |
-| `--from-lsn`   | Start from LSN (inclusive)                   |          |
-| `--to-lsn`     | End at LSN (inclusive)                       |          |
-| `--from-time`  | Filter from time                             |          |
-| `--to-time`    | Filter until time                            |          |
+| `--from`       | Filter from time                             |          |
+| `--to`         | Filter until time                            |          |
 
 The default format for `export` is `json`, unlike `query` which defaults to `text`.
 

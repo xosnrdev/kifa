@@ -23,18 +23,18 @@ On Linux, the WAL uses Direct I/O (`O_DIRECT`) to bypass the kernel page cache. 
 Each WAL entry is validated with:
 
 - **Header CRC**: protects the length field
-- **Data CRC**: protects LSN, timestamp, and payload
+- **Data CRC**: protects timestamp and payload
 - **Magic trailer**: detects incomplete writes from a crash mid-entry
 
 ### Memtable
 
-The memtable is an in-memory buffer holding recent writes, sorted by LSN. Because Kifa is append-only (entries are never updated or deleted), the memtable is a Vec with entries appended in LSN order. Entries are iterated sequentially during flush and query.
+The memtable is an in-memory buffer holding recent writes, sorted by timestamp. Because Kifa is append-only (entries are never updated or deleted), the memtable is a Vec with entries appended in timestamp order. Entries are iterated sequentially during flush and query.
 
 When the memtable exceeds the flush threshold (default: 4 MiB), it is written to an SSTable and cleared.
 
 ### SSTables
 
-SSTables (Sorted String Tables) are immutable files on disk. Each SSTable contains entries sorted by LSN. Once written, an SSTable is never modified.
+SSTables (Sorted String Tables) are immutable files on disk. Each SSTable contains entries sorted by timestamp. Once written, an SSTable is never modified.
 
 Reads search the memtable first, then SSTables from newest to oldest.
 
@@ -46,17 +46,16 @@ Compaction triggers when the number of SSTables exceeds the compaction threshold
 
 ### Manifest
 
-The manifest tracks database state: which SSTables exist, the checkpoint LSN (the point up to which entries have been flushed to SSTables), and metadata checksums. On startup, the manifest determines where WAL replay begins.
+The manifest tracks database state: which SSTables exist, the checkpoint timestamp (the point up to which entries have been flushed to SSTables), and metadata checksums. On startup, the manifest determines where WAL replay begins.
 
 ## Entry Format
 
-Each log entry contains three fields:
+Each log entry contains two fields:
 
-| Field     | Size     | Description                                    |
-| --------- | -------- | ---------------------------------------------- |
-| LSN       | 8 bytes  | Log sequence number (monotonically increasing) |
-| Timestamp | 8 bytes  | Unix timestamp in milliseconds                 |
-| Data      | Variable | Raw payload (max 1 MiB)                        |
+| Field     | Size     | Description                                        |
+| --------- | -------- | -------------------------------------------------- |
+| Timestamp | 8 bytes  | Unix timestamp in nanoseconds (monotonically increasing) |
+| Data      | Variable | Raw payload (max 1 MiB)                            |
 
 ## Crash Recovery
 
@@ -64,17 +63,17 @@ On startup, Kifa:
 
 <Steps>
 
-1. **Read manifest.** Determine the checkpoint LSN.
+1. **Read manifest.** Determine the checkpoint timestamp.
 
-2. **Replay WAL.** Replay all entries after the checkpoint LSN into the memtable.
+2. **Replay WAL.** Replay all entries after the checkpoint timestamp into the memtable.
 
 3. **Validate CRCs.** Entries with invalid CRCs or incomplete trailers are discarded. They represent writes that did not complete before the crash.
 
-4. **Report statistics.** Entries replayed, time range, and any gaps in the LSN sequence.
+4. **Report statistics.** Entries replayed and time range covered.
 
 </Steps>
 
-In Cautious mode, there are no gaps. Every entry that `append()` confirmed is on disk. In Normal mode, up to 49 entries between syncs may be missing after a crash.
+In Cautious mode, no entries are lost. Every entry that `append()` confirmed is on disk. In Normal mode, up to 49 entries between syncs may be missing after a crash.
 
 <CardGrid>
   <LinkCard

@@ -46,15 +46,14 @@ pub fn sync_dir_path(_path: &Path) -> io::Result<()> {
 }
 
 pub struct HeapEntry {
-    pub lsn: u64,
-    pub timestamp_ms: u64,
+    pub timestamp_ns: u64,
     pub data: Arc<[u8]>,
     pub source_idx: usize,
 }
 
 impl PartialEq for HeapEntry {
     fn eq(&self, other: &Self) -> bool {
-        self.lsn == other.lsn
+        self.timestamp_ns == other.timestamp_ns
     }
 }
 
@@ -68,6 +67,6 @@ impl PartialOrd for HeapEntry {
 
 impl Ord for HeapEntry {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.lsn.cmp(&other.lsn)
+        self.timestamp_ns.cmp(&other.timestamp_ns)
     }
 }

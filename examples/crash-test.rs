@@ -1,8 +1,9 @@
 //! Crash-test harness for Kifa.
 //!
 //! Repeatedly starts Kifa with piped transactions, kills it mid-write with
-//! SIGKILL, then verifies data integrity via the stats command. Proves that
-//! fsync'd entries survive unclean shutdowns.
+//! SIGKILL, then verifies data integrity by set-membership on timestamps.
+//! Proves that every entry marked DURABLE via stderr is recoverable from disk
+//! after an unclean shutdown.
 //!
 //! **`LazyFS` Mode (Linux/Docker)**
 //!
@@ -16,8 +17,6 @@
 //! crash due to batched fsync. The test will report any loss but this is
 //! expected behavior for normal mode, not a failure.
 
-#![feature(string_from_utf8_lossy_owned)]
-
 use std::ffi::OsStr;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
@@ -28,6 +27,7 @@ use std::{fs, io, thread};
 use anyhow::{Context, Result};
 use clap::{Parser, value_parser};
 use lib_kifa::FlushMode;
+use lib_kifa::engine::{Config, StorageEngine};
 use sysinfo::{ProcessesToUpdate, System};
 
 fn main() -> Result<()> {
@@ -114,15 +114,11 @@ struct Args {
 /// Result of a single crash cycle verification.
 #[derive(Debug)]
 struct CycleResult {
-    /// Whether the cycle passed all integrity checks.
     passed: bool,
-    /// Number of entries found in the database after the cycle.
-    entries: u64,
-    /// Expected durable entry count (`prev_entries` + durable confirmations this cycle).
-    expected_durable: u64,
-    /// Entries lost (expected durable - recovered).
-    entries_lost: u64,
-    /// Optional reason for failure if the cycle did not pass.
+    recovered: u64,
+    durable_captured: u64,
+    missing_count: u64,
+    missing_timestamps: Vec<u64>,
     reason: Option<String>,
 }
 
@@ -131,18 +127,12 @@ const NORMAL_MODE_MAX_LOSS: u64 = 49;
 
 /// Summary of the entire crash test run.
 struct TestSummary {
-    /// Total number of cycles that were executed.
     total_cycles: u64,
-    /// Number of cycles that passed all checks.
     passed: u64,
-    /// Number of cycles that failed integrity checks.
     failed: u64,
-    /// Final entry count in the database.
     final_entries: u64,
-    /// Maximum entries lost in any single cycle.
-    max_loss: u64,
-    /// Total entries lost across all cycles.
-    total_loss: u64,
+    max_missing: u64,
+    total_missing: u64,
 }
 
 /// Guard that cleans up test processes on drop.
@@ -245,21 +235,22 @@ fn spawn_test_pipeline(args: &Args, cycle: u64) -> Result<PipelineHandle> {
     Ok(PipelineHandle { kifa_child, gen_child })
 }
 
-/// Parses stderr output to count durable confirmations and collect errors.
-fn parse_daemon_stderr(stderr: ChildStderr) -> (u64, Vec<String>) {
+fn parse_daemon_stderr(stderr: ChildStderr) -> (Vec<u64>, Vec<String>) {
     let reader = io::BufReader::new(stderr);
-    let mut durable_count = 0;
+    let mut timestamps = Vec::new();
     let mut errors = Vec::new();
 
     for line in reader.lines().map_while(Result::ok) {
-        if line.starts_with("DURABLE:") {
-            durable_count += 1;
+        if let Some(ts_str) = line.strip_prefix("DURABLE:")
+            && let Ok(ts) = ts_str.parse::<u64>()
+        {
+            timestamps.push(ts);
         } else if !line.is_empty() {
             errors.push(line);
         }
     }
 
-    (durable_count, errors)
+    (timestamps, errors)
 }
 
 /// Refreshes the system process list once and returns the System handle.
@@ -362,86 +353,70 @@ fn cleanup_all_processes(data_dir: &Path) {
     }
 }
 
-/// Runs the `kifa` stats command and captures its output.
-///
-/// The stats command triggers WAL recovery and reports the current state of the
-/// database, which is used to verify that data was not corrupted by the crash.
-fn run_stats_command(kifa_bin: &Path, data_dir: &Path) -> Result<String> {
-    let output = Command::new(kifa_bin)
-        .args([
-            "stats",
-            "-d",
-            data_dir
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("invalid UTF-8 in data directory path"))?,
-        ])
-        .output()
-        .context("failed to execute kifa stats command")?;
+/// `MergeIter` yields entries in timestamp order; the assert guards that invariant.
+fn collect_recovered_timestamps(data_dir: &Path) -> Result<Vec<u64>> {
+    let config = Config { compaction_enabled: false, ..Config::default() };
+    let (engine, _) =
+        StorageEngine::open(data_dir, config).context("failed to open engine for recovery")?;
 
-    let mut result = String::from_utf8_lossy_owned(output.stdout);
-    result.push_str(&String::from_utf8_lossy(&output.stderr));
+    let iter = engine.entries().context("failed to iterate recovered entries")?;
+    let timestamps: Vec<u64> = iter.map(|entry| entry.timestamp_ns).collect();
+    debug_assert!(timestamps.is_sorted(), "MergeIter violated sorted-output invariant");
 
-    Ok(result)
+    Ok(timestamps)
 }
 
-/// Parses the stats command output to extract entry count.
-///
-/// The output format is expected to contain a line like "Total entries: 12345".
-/// If parsing fails, conservative defaults are returned to avoid false positives
-/// in the test results.
-fn parse_stats_output(output: &str) -> u64 {
-    let mut result = u64::default();
+/// Invariants by flush mode:
+/// * Cautious/Emergency: every DURABLE timestamp must be recovered.
+/// * Normal: at most 49 DURABLE timestamps may be missing.
+/// * All modes: entry count must be monotonically non-decreasing.
+fn verify_integrity(
+    recovered: &[u64],
+    durable: &[u64],
+    prev_entries: u64,
+    flush_mode: FlushMode,
+) -> CycleResult {
+    debug_assert!(recovered.is_sorted(), "recovered timestamps must be sorted for binary search");
 
-    for line in output.lines() {
-        if line.contains("Total entries:")
-            && let Some(value) = line.split_whitespace().last()
-        {
-            result = value.parse().unwrap_or_default();
+    let recovered_count = recovered.len() as u64;
+    let durable_count = durable.len() as u64;
+
+    let mut missing_count = 0;
+    let mut missing_samples = Vec::new();
+    for &ts in durable {
+        if recovered.binary_search(&ts).is_err() {
+            missing_count += 1;
+            if missing_samples.len() < 10 {
+                missing_samples.push(ts);
+            }
         }
     }
 
-    result
-}
-
-/// Verifies the integrity of the database after a crash cycle.
-///
-/// Checks critical invariants based on flush mode:
-/// * Cautious/Emergency: No durable entries lost.
-/// * Normal: Up to 49 entries at risk due to batched fsync.
-/// * All modes: Entry count must be monotonically non-decreasing.
-///
-/// Violations indicate corruption or unexpected data loss.
-fn verify_integrity(
-    stats: u64,
-    prev_entries: u64,
-    expected_durable: u64,
-    flush_mode: FlushMode,
-) -> CycleResult {
-    let entries_lost = expected_durable.saturating_sub(stats);
     let mut passed = true;
     let mut reason = None;
 
-    if stats < prev_entries {
+    if recovered_count < prev_entries {
         passed = false;
-        reason = Some(format!("entries decreased: {stats} < {prev_entries}"));
+        reason = Some(format!("entries decreased: {recovered_count} < {prev_entries}"));
+    } else if flush_mode.is_durable() && missing_count > 0 {
+        passed = false;
+        reason = Some(format!("{missing_count} durable timestamps missing from recovered set"));
+    } else if !flush_mode.is_durable() && missing_count > NORMAL_MODE_MAX_LOSS {
+        passed = false;
+        reason = Some(format!("{missing_count} missing > {NORMAL_MODE_MAX_LOSS}"));
     }
 
-    if flush_mode.is_durable() && entries_lost > 0 {
-        passed = false;
-        reason = Some(format!(
-            "durable entries lost: {entries_lost} (expected={expected_durable}, recovered={stats})"
-        ));
-    } else if !flush_mode.is_durable() && entries_lost > NORMAL_MODE_MAX_LOSS {
-        passed = false;
-        reason = Some(format!(
-            "excessive loss: {entries_lost} > {NORMAL_MODE_MAX_LOSS} (expected={expected_durable}, recovered={stats})"
-        ));
+    CycleResult {
+        passed,
+        recovered: recovered_count,
+        durable_captured: durable_count,
+        missing_count,
+        missing_timestamps: missing_samples,
+        reason,
     }
-
-    CycleResult { passed, entries: stats, expected_durable, entries_lost, reason }
 }
 
-/// Executes a single crash cycle: spawn, kill, and verify.
+/// Executes a single crash cycle that spawn, kill, and verify.
 ///
 /// The cycle runs for a random duration (1-5 seconds) for crashes to occur
 /// at different points in the write/flush/compaction lifecycle, for
@@ -466,7 +441,8 @@ fn run_single_cycle(args: &Args, cycle: u64, prev_entries: u64) -> Result<CycleR
     let _ = handle.gen_child.wait();
     let _ = handle.kifa_child.wait();
 
-    let (durable_count, errors) = stderr.map_or_else(|| (0, Vec::new()), parse_daemon_stderr);
+    let (durable_timestamps, errors) =
+        stderr.map_or_else(|| (Vec::new(), Vec::new()), parse_daemon_stderr);
 
     cleanup_orphaned_processes(&args.data_dir, cycle);
 
@@ -476,27 +452,22 @@ fn run_single_cycle(args: &Args, cycle: u64, prev_entries: u64) -> Result<CycleR
     #[cfg(not(target_os = "linux"))]
     let data_dir = &args.data_dir;
 
-    let stats_output = run_stats_command(&args.kifa_bin, data_dir)?;
-    let stats = parse_stats_output(&stats_output);
+    let recovered_timestamps = collect_recovered_timestamps(data_dir)?;
 
-    // This and the later aids in debugging internal failures.
-    if stats == 0 {
-        eprintln!("  kifa stats returned no parseable output:");
-        for line in stats_output.lines().take(20) {
-            eprintln!("  {line}");
-        }
+    if recovered_timestamps.is_empty() {
+        eprintln!("  engine recovered zero entries from {}", data_dir.display());
     }
 
-    if durable_count == 0 && !errors.is_empty() {
-        eprintln!("  daemon stderr is missing DURABLE lines:");
+    if durable_timestamps.is_empty() && !errors.is_empty() {
+        eprintln!("  daemon stderr contained no DURABLE lines:");
         for line in errors.iter().take(20) {
             eprintln!("  {line}");
         }
     }
 
-    let expected_durable = prev_entries + durable_count;
+    let flush_mode: FlushMode = args.flush_mode.parse().unwrap();
     let result =
-        verify_integrity(stats, prev_entries, expected_durable, args.flush_mode.parse().unwrap());
+        verify_integrity(&recovered_timestamps, &durable_timestamps, prev_entries, flush_mode);
 
     Ok(result)
 }
@@ -509,35 +480,38 @@ fn run_crash_test(args: &Args) -> Result<TestSummary> {
     let mut passed = 0;
     let mut failed = 0;
     let mut prev_entries = 0;
-    let mut max_loss = 0;
-    let mut total_loss = 0;
+    let mut max_missing = 0;
+    let mut total_missing = 0;
 
     for cycle in 1..=args.cycles {
         let result = run_single_cycle(args, cycle, prev_entries)?;
 
-        max_loss = max_loss.max(result.entries_lost);
-        total_loss += result.entries_lost;
+        max_missing = max_missing.max(result.missing_count);
+        total_missing += result.missing_count;
 
         if result.passed {
             println!(
-                "[{:3}/{}] PASS  entries={:<8} expected={:<8} lost={:<4}",
-                cycle, args.cycles, result.entries, result.expected_durable, result.entries_lost,
+                "[{:3}/{}] PASS  recovered={:<8} durable={:<8} missing={:<4}",
+                cycle, args.cycles, result.recovered, result.durable_captured, result.missing_count,
             );
             passed += 1;
         } else {
             println!(
-                "[{:3}/{}] FAIL  entries={:<8} expected={:<8} lost={:<4} - {}",
+                "[{:3}/{}] FAIL  recovered={:<8} durable={:<8} missing={:<4} - {}",
                 cycle,
                 args.cycles,
-                result.entries,
-                result.expected_durable,
-                result.entries_lost,
-                result.reason.as_deref().unwrap_or("unknown")
+                result.recovered,
+                result.durable_captured,
+                result.missing_count,
+                result.reason.as_deref().unwrap_or("unknown"),
             );
+            if !result.missing_timestamps.is_empty() {
+                eprintln!("  missing timestamps: {:?}", result.missing_timestamps);
+            }
             failed += 1;
         }
 
-        prev_entries = result.entries;
+        prev_entries = result.recovered;
     }
 
     Ok(TestSummary {
@@ -545,8 +519,8 @@ fn run_crash_test(args: &Args) -> Result<TestSummary> {
         passed,
         failed,
         final_entries: prev_entries,
-        max_loss,
-        total_loss,
+        max_missing,
+        total_missing,
     })
 }
 
@@ -575,8 +549,8 @@ fn print_summary(summary: &TestSummary) {
     println!("Cycles:     {}/{} passed", summary.passed, summary.total_cycles);
     println!("Failed:     {}", summary.failed);
     println!("Entries:    {} verified", summary.final_entries);
-    println!("Max loss:   {} entries", summary.max_loss);
-    println!("Total loss: {} entries", summary.total_loss);
+    println!("Max missing: {} timestamps", summary.max_missing);
+    println!("Total missing: {} timestamps", summary.total_missing);
 }
 
 /// Sets up a Ctrl-C signal handler for graceful shutdown.
@@ -596,60 +570,96 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_stats_output_with_entries() {
-        let output = "Total entries: 12345\n";
-        let result = parse_stats_output(output);
-        assert_eq!(result, 12345);
-    }
-
-    #[test]
-    fn test_parse_stats_output_empty() {
-        let output = "";
-        let result = parse_stats_output(output);
-        assert_eq!(result, 0);
-    }
-
-    #[test]
-    fn test_verify_integrity_pass() {
-        let result = verify_integrity(100, 50, 100, FlushMode::Cautious);
+    fn all_durable_recovered_passes() {
+        let recovered = &[10, 20, 30, 40, 50];
+        let durable = &[20, 30, 40];
+        let result = verify_integrity(recovered, durable, 3, FlushMode::Cautious);
         assert!(result.passed);
+        assert_eq!(result.missing_count, 0);
         assert!(result.reason.is_none());
-        assert_eq!(result.entries_lost, 0);
     }
 
     #[test]
-    fn test_verify_integrity_fail_decreased_entries() {
-        let result = verify_integrity(30, 50, 30, FlushMode::Cautious);
+    fn entries_decreased_fails() {
+        let recovered = &[10, 20, 30];
+        let durable = &[];
+        let result = verify_integrity(recovered, durable, 50, FlushMode::Cautious);
         assert!(!result.passed);
         assert!(result.reason.as_ref().unwrap().contains("entries decreased"));
     }
 
     #[test]
-    fn test_verify_integrity_same_entries_pass() {
-        let result = verify_integrity(50, 50, 50, FlushMode::Cautious);
+    fn entries_decreased_takes_priority_over_missing() {
+        let recovered = &[10, 20];
+        let durable = &[20, 30, 40];
+        let result = verify_integrity(recovered, durable, 50, FlushMode::Cautious);
+        assert!(!result.passed);
+        assert!(result.reason.as_ref().unwrap().contains("entries decreased"));
+        assert_eq!(result.missing_count, 2);
+    }
+
+    #[test]
+    fn same_count_no_durable_passes() {
+        let recovered = &[10, 20, 30, 40, 50];
+        let durable = &[];
+        let result = verify_integrity(recovered, durable, 5, FlushMode::Cautious);
         assert!(result.passed);
     }
 
     #[test]
-    fn test_verify_integrity_cautious_loss_fails() {
-        let result = verify_integrity(95, 50, 100, FlushMode::Cautious);
+    fn cautious_missing_timestamp_fails() {
+        let recovered = &[10, 20, 40, 50];
+        let durable = &[20, 30, 40];
+        let result = verify_integrity(recovered, durable, 2, FlushMode::Cautious);
         assert!(!result.passed);
-        assert_eq!(result.entries_lost, 5);
-        assert!(result.reason.as_ref().unwrap().contains("durable entries lost"));
+        assert_eq!(result.missing_count, 1);
+        assert_eq!(result.missing_timestamps, vec![30]);
+        assert!(result.reason.as_ref().unwrap().contains("missing"));
     }
 
     #[test]
-    fn test_verify_integrity_normal_loss_within_limit() {
-        let result = verify_integrity(60, 50, 100, FlushMode::Normal);
+    fn emergency_missing_timestamp_fails() {
+        let recovered = &[10, 20, 40, 50];
+        let durable = &[20, 30, 40];
+        let result = verify_integrity(recovered, durable, 2, FlushMode::Emergency);
+        assert!(!result.passed);
+        assert_eq!(result.missing_count, 1);
+        assert_eq!(result.missing_timestamps, vec![30]);
+    }
+
+    #[test]
+    fn normal_mode_tolerates_missing_within_limit() {
+        let recovered: Vec<u64> = (0..60).collect();
+        let durable: Vec<u64> = (11..60).collect();
+        let result = verify_integrity(&recovered, &durable, 50, FlushMode::Normal);
         assert!(result.passed);
-        assert_eq!(result.entries_lost, 40);
+        assert_eq!(result.missing_count, 0);
     }
 
     #[test]
-    fn test_verify_integrity_normal_loss_exceeds_limit() {
-        let result = verify_integrity(40, 30, 100, FlushMode::Normal);
+    fn normal_mode_tolerates_missing_at_boundary() {
+        let recovered: Vec<u64> = (0..60).collect();
+        let durable: Vec<u64> = (11..109).collect();
+        let result = verify_integrity(&recovered, &durable, 50, FlushMode::Normal);
+        assert!(result.passed);
+        assert_eq!(result.missing_count, 49);
+    }
+
+    #[test]
+    fn normal_mode_excess_missing_fails() {
+        let recovered: Vec<u64> = (0..40).collect();
+        let durable: Vec<u64> = (0..100).collect();
+        let result = verify_integrity(&recovered, &durable, 30, FlushMode::Normal);
         assert!(!result.passed);
-        assert_eq!(result.entries_lost, 60);
-        assert!(result.reason.as_ref().unwrap().contains("excessive loss"));
+        assert!(result.missing_count > NORMAL_MODE_MAX_LOSS);
+    }
+
+    #[test]
+    fn extra_recovered_entries_pass() {
+        let recovered = &[10, 20, 30, 40, 50, 60, 70];
+        let durable = &[20, 30];
+        let result = verify_integrity(recovered, durable, 5, FlushMode::Cautious);
+        assert!(result.passed);
+        assert_eq!(result.missing_count, 0);
     }
 }

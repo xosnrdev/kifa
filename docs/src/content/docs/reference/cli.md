@@ -12,9 +12,9 @@ description: Complete reference for all Kifa commands, flags, and options.
 | `-h, --help`            | Print help                                           |
 | `-V, --version`         | Print version                                        |
 
-## `daemon`
+## `ingest`
 
-Run as log ingestion daemon. This is the default command when no subcommand is specified.
+Run log ingestion. This is the default command when no subcommand is specified.
 
 ### Source Flags
 

@@ -16,7 +16,7 @@ body:
       label: Steps to reproduce
       description: Minimal steps to reproduce the behavior.
       placeholder: |
-        1. Run `kifa daemon --stdin`
+        1. Run `kifa ingest --stdin`
         2. Send input via pipe
         3. Observe error
     validations:

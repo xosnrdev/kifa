@@ -76,7 +76,7 @@ struct Cli {
     config: Option<PathBuf>,
 
     #[command(subcommand)]
-    command: Option<Command>,
+    command: Command,
 }
 
 #[derive(Subcommand)]
@@ -209,37 +209,23 @@ fn build_partial_config(cli: &Cli, ingest: Option<&IngestCmd>) -> PartialConfig 
 
 fn resolve_command(cli: &Cli) -> Result<ResolvedCommand> {
     match &cli.command {
-        Some(Command::Query(cmd)) => {
+        Command::Query(cmd) => {
             let partial = build_partial_config(cli, None);
             let app_config = config::load(partial).context("loading config")?;
             Ok(ResolvedCommand::Query { data_dir: app_config.data_dir, cmd: cmd.clone() })
         }
-        Some(Command::Export(cmd)) => {
+        Command::Export(cmd) => {
             let partial = build_partial_config(cli, None);
             let app_config = config::load(partial).context("loading config")?;
             Ok(ResolvedCommand::Export { data_dir: app_config.data_dir, cmd: cmd.clone() })
         }
-        Some(Command::Stats) => {
+        Command::Stats => {
             let partial = build_partial_config(cli, None);
             let app_config = config::load(partial).context("loading config")?;
             Ok(ResolvedCommand::Stats { data_dir: app_config.data_dir })
         }
-        Some(Command::Ingest(ingest_cmd)) => {
+        Command::Ingest(ingest_cmd) => {
             let partial = build_partial_config(cli, Some(ingest_cmd));
-            let app_config = config::load(partial).context("loading config")?;
-
-            if !app_config.sources.stdin
-                && app_config.sources.files.is_empty()
-                && app_config.sources.tcp.is_empty()
-                && app_config.sources.udp.is_empty()
-            {
-                bail!("at least one source required (--stdin, --file, --tcp, --udp)");
-            }
-            Ok(ResolvedCommand::Ingest(app_config))
-        }
-        // No subcommand defaults to ingest mode, allowing `kifa -c config.toml` without explicit `ingest`.
-        None => {
-            let partial = build_partial_config(cli, Some(&IngestCmd::default()));
             let app_config = config::load(partial).context("loading config")?;
 
             if !app_config.sources.stdin

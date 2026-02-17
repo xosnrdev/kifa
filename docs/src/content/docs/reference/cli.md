@@ -14,7 +14,7 @@ description: Complete reference for all Kifa commands, flags, and options.
 
 ## `ingest`
 
-Run log ingestion. This is the default command when no subcommand is specified.
+Run log ingestion.
 
 ### Source Flags
 

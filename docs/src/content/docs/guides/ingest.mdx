@@ -67,17 +67,6 @@ At least one source is required. Sources can be combined.
   </TabItem>
 </Tabs>
 
-## Default Behavior
-
-Running `kifa` without a subcommand defaults to ingest mode. The following are equivalent:
-
-```bash
-kifa ingest -c config.toml
-kifa -c config.toml
-```
-
-This requires at least one source to be configured in the TOML file or via environment variables.
-
 ## Shutdown
 
 Send `SIGINT` (Ctrl+C) or `SIGTERM` for graceful shutdown. Kifa flushes pending data before exiting.

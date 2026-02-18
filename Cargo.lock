@@ -535,7 +535,7 @@ dependencies = [
 
 [[package]]
 name = "kifa"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -579,7 +579,7 @@ dependencies = [
 
 [[package]]
 name = "lib-kifa"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "crc32fast",
  "criterion",

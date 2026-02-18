@@ -33,12 +33,12 @@ Flush modes control when data is fsync'd to disk. The right choice depends on po
 <Tabs>
   <TabItem label="CLI flag">
     ```bash title="Terminal"
-    kifa daemon --stdin --flush-mode cautious -d ./data
+    kifa ingest --stdin --flush-mode cautious -d ./data
     ```
   </TabItem>
   <TabItem label="Environment">
     ```bash title="Terminal"
-    KIFA_FLUSH_MODE=emergency kifa daemon --stdin -d ./data
+    KIFA_FLUSH_MODE=emergency kifa ingest --stdin -d ./data
     ```
   </TabItem>
   <TabItem label="Runtime (Unix)">

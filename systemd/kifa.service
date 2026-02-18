@@ -5,7 +5,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/kifa daemon
+ExecStart=/usr/bin/kifa ingest
 
 # Logging filter (env_logger syntax: debug, info, warn, error, or module-specific).
 #Environment=KIFA_LOG=info

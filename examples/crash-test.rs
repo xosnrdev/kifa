@@ -8,7 +8,7 @@
 //! **`LazyFS` Mode (Linux/Docker)**
 //!
 //! When `--lazyfs` is enabled, the test uses `LazyFS` FIFO commands to simulate
-//! true power failure by clearing unsynced cache before killing the daemon.
+//! true power failure by clearing unsynced cache before killing the ingester.
 //!
 //! **Flush Mode Behavior**
 //!
@@ -180,7 +180,7 @@ struct PipelineHandle {
     gen_child: Child,
 }
 
-/// Spawns the test pipeline consisting of `gen-transactions` piped to `kifa` daemon.
+/// Spawns the test pipeline consisting of `gen-transactions` piped to `kifa ingest`.
 ///
 /// The pipeline simulates a crash scenario where `gen-transactions` generates a stream
 /// of transactions and `kifa` processes them via stdin. The pipeline will be forcefully
@@ -210,7 +210,7 @@ fn spawn_test_pipeline(args: &Args, cycle: u64) -> Result<PipelineHandle> {
     let kifa_bin = &args.kifa_bin;
     let kifa_child = Command::new(kifa_bin)
         .args([
-            "daemon",
+            "ingest",
             "--stdin",
             "-d",
             args.data_dir
@@ -230,12 +230,12 @@ fn spawn_test_pipeline(args: &Args, cycle: u64) -> Result<PipelineHandle> {
             }
             Err(err.into())
         })
-        .context("failed to spawn kifa daemon process")?;
+        .context("failed to spawn kifa ingest process")?;
 
     Ok(PipelineHandle { kifa_child, gen_child })
 }
 
-fn parse_daemon_stderr(stderr: ChildStderr) -> (Vec<u64>, Vec<String>) {
+fn parse_ingester_stderr(stderr: ChildStderr) -> (Vec<u64>, Vec<String>) {
     let reader = io::BufReader::new(stderr);
     let mut timestamps = Vec::new();
     let mut errors = Vec::new();
@@ -269,7 +269,7 @@ fn cmd_contains_all(process: &sysinfo::Process, parts: &[&str]) -> bool {
 
 /// Cleans up any orphaned test processes for the given cycle.
 ///
-/// Refreshes the process list once and kills matching kifa daemon and
+/// Refreshes the process list once and kills matching kifa ingest and
 /// gen-transactions processes in a single pass. Waits briefly afterward
 /// to allow the OS to complete process cleanup before proceeding.
 fn cleanup_orphaned_processes(data_dir: &Path, cycle: u64) {
@@ -280,7 +280,7 @@ fn cleanup_orphaned_processes(data_dir: &Path, cycle: u64) {
     for process in sys.processes().values() {
         let name = process.name().to_string_lossy();
         let is_orphan_kifa =
-            name.contains("kifa") && cmd_contains_all(process, &["daemon", &data_dir]);
+            name.contains("kifa") && cmd_contains_all(process, &["ingest", &data_dir]);
         let is_orphan_gen =
             name.contains("gen-transactions") && cmd_contains_all(process, &[&cycle_seed]);
 
@@ -344,7 +344,7 @@ fn cleanup_all_processes(data_dir: &Path) {
     for process in sys.processes().values() {
         let name = process.name().to_string_lossy();
         let is_kifa =
-            name.contains("kifa") && cmd_contains_all(process, &["daemon", &data_dir_str]);
+            name.contains("kifa") && cmd_contains_all(process, &["ingest", &data_dir_str]);
         let is_gen = name.contains("gen-transactions");
 
         if is_kifa || is_gen {
@@ -422,7 +422,7 @@ fn verify_integrity(
 /// at different points in the write/flush/compaction lifecycle, for
 /// better coverage of crash scenarios.
 ///
-/// When `LazyFS` is enabled, clears the cache before killing the daemon to
+/// When `LazyFS` is enabled, clears the cache before killing the ingester to
 /// simulate true power failure (unsynced data is discarded).
 fn run_single_cycle(args: &Args, cycle: u64, prev_entries: u64) -> Result<CycleResult> {
     let mut handle = spawn_test_pipeline(args, cycle)?;
@@ -442,7 +442,7 @@ fn run_single_cycle(args: &Args, cycle: u64, prev_entries: u64) -> Result<CycleR
     let _ = handle.kifa_child.wait();
 
     let (durable_timestamps, errors) =
-        stderr.map_or_else(|| (Vec::new(), Vec::new()), parse_daemon_stderr);
+        stderr.map_or_else(|| (Vec::new(), Vec::new()), parse_ingester_stderr);
 
     cleanup_orphaned_processes(&args.data_dir, cycle);
 
@@ -459,7 +459,7 @@ fn run_single_cycle(args: &Args, cycle: u64, prev_entries: u64) -> Result<CycleR
     }
 
     if durable_timestamps.is_empty() && !errors.is_empty() {
-        eprintln!("  daemon stderr contained no DURABLE lines:");
+        eprintln!("  ingester stderr contained no DURABLE lines:");
         for line in errors.iter().take(20) {
             eprintln!("  {line}");
         }

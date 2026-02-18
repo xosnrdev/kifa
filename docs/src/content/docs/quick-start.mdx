@@ -21,11 +21,11 @@ This walkthrough takes about five minutes. At the end, Kifa is ingesting data, r
 
 2. **Ingest a transaction**
 
-   Pipe a JSON transaction into the daemon via stdin:
+   Pipe a JSON transaction into the ingester via stdin:
 
    ```bash title="Terminal"
    echo '{"txn":"TXN-001","amount":5000,"status":"completed"}' | \
-     ./target/release/kifa daemon --stdin -d ./data
+     ./target/release/kifa ingest --stdin -d ./data
    ```
 
    Kifa writes the entry to the write-ahead log and fsyncs it to disk. The process exits after stdin closes.
@@ -67,9 +67,9 @@ This walkthrough takes about five minutes. At the end, Kifa is ingesting data, r
 
 <CardGrid>
   <LinkCard
-    title="Running the Daemon"
+    title="Ingestion"
     description="Ingest from files, TCP, or UDP."
-    href="/kifa/guides/daemon/"
+    href="/kifa/guides/ingest/"
   />
   <LinkCard
     title="Choosing a Flush Mode"

@@ -1,5 +1,5 @@
 ---
-title: Running the Daemon
+title: Ingestion
 description: Ingest log lines from stdin, files, TCP, and UDP sources.
 ---
 
@@ -10,13 +10,13 @@ import {
   CardGrid,
 } from "@astrojs/starlight/components";
 
-Daemon mode reads log lines from one or more sources and persists them to disk. Each line becomes one entry in the write-ahead log.
+`kifa ingest` reads log lines from one or more sources and persists them to disk. Each line becomes one entry in the write-ahead log.
 
 ## Input Sources
 
 | Flag      | Description                        | Example                                       |
 | --------- | ---------------------------------- | --------------------------------------------- |
-| `--stdin` | Read from standard input           | `echo "log" \| kifa daemon --stdin -d ./data` |
+| `--stdin` | Read from standard input           | `echo "log" \| kifa ingest --stdin -d ./data` |
 | `--file`  | Tail a log file (repeatable)       | `--file /var/log/app.log`                     |
 | `--tcp`   | Listen on TCP address (repeatable) | `--tcp 127.0.0.1:5514`                        |
 | `--udp`   | Listen on UDP address (repeatable) | `--udp 0.0.0.0:5515`                          |
@@ -30,7 +30,7 @@ At least one source is required. Sources can be combined.
     Pipe from another process:
 
     ```bash title="Terminal"
-    my-pos-app | kifa daemon --stdin -d /var/lib/kifa
+    my-pos-app | kifa ingest --stdin -d /var/lib/kifa
     ```
 
   </TabItem>
@@ -38,7 +38,7 @@ At least one source is required. Sources can be combined.
     Tail multiple log files:
 
     ```bash title="Terminal"
-    kifa daemon \
+    kifa ingest \
       --file /var/log/transactions.log \
       --file /var/log/payments.log \
       -d /var/lib/kifa
@@ -49,7 +49,7 @@ At least one source is required. Sources can be combined.
     TCP and UDP ingestion:
 
     ```bash title="Terminal"
-    kifa daemon --tcp 127.0.0.1:5514 --udp 0.0.0.0:5515 -d /var/lib/kifa
+    kifa ingest --tcp 127.0.0.1:5514 --udp 0.0.0.0:5515 -d /var/lib/kifa
     ```
 
   </TabItem>
@@ -57,7 +57,7 @@ At least one source is required. Sources can be combined.
     All sources at once:
 
     ```bash title="Terminal"
-    kifa daemon \
+    kifa ingest \
       --stdin \
       --file /var/log/app.log \
       --tcp 127.0.0.1:5514 \
@@ -66,17 +66,6 @@ At least one source is required. Sources can be combined.
 
   </TabItem>
 </Tabs>
-
-## Default Behavior
-
-Running `kifa` without a subcommand defaults to daemon mode. The following are equivalent:
-
-```bash
-kifa daemon -c config.toml
-kifa -c config.toml
-```
-
-This requires at least one source to be configured in the TOML file or via environment variables.
 
 ## Shutdown
 

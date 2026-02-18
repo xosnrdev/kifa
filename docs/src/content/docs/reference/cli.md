@@ -12,9 +12,9 @@ description: Complete reference for all Kifa commands, flags, and options.
 | `-h, --help`            | Print help                                           |
 | `-V, --version`         | Print version                                        |
 
-## `daemon`
+## `ingest`
 
-Run as log ingestion daemon. This is the default command when no subcommand is specified.
+Run log ingestion.
 
 ### Source Flags
 
@@ -49,6 +49,7 @@ Query stored log entries and print to stdout.
 | `--from <TIME>`      | Filter from time                            |         |
 | `--to <TIME>`        | Filter until time                           |         |
 | `-f, --format <FMT>` | Output format: `text`, `json`, `csv`, `hex` | `text`  |
+| `--limit <N>`        | Maximum entries to return                   | `1000`  |
 
 ### Time Format
 
@@ -66,6 +67,7 @@ Export log entries to a file. Writes are atomic.
 | `--from <TIME>`       | Filter from time                            |          |
 | `--to <TIME>`         | Filter until time                           |          |
 | `-f, --format <FMT>`  | Output format: `text`, `json`, `csv`, `hex` | `json`   |
+| `--limit <N>`         | Maximum entries to export                   | `1000`   |
 
 ## `stats`
 

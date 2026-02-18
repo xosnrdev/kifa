@@ -77,7 +77,7 @@ export default defineConfig({
         {
           label: "Guides",
           items: [
-            { label: "Running the Daemon", slug: "guides/daemon" },
+            { label: "Ingestion", slug: "guides/ingest" },
             { label: "Querying Logs", slug: "guides/querying" },
             { label: "Exporting Data", slug: "guides/exporting" },
             { label: "Choosing a Flush Mode", slug: "guides/flush-modes" },

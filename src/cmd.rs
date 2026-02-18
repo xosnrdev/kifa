@@ -45,7 +45,7 @@ pub fn run() -> Result<ExitCode> {
         ResolvedCommand::Query { data_dir, cmd } => run_query_command(&data_dir, &cmd),
         ResolvedCommand::Export { data_dir, cmd } => run_export_command(&data_dir, &cmd),
         ResolvedCommand::Stats { data_dir } => run_stats_command(&data_dir),
-        ResolvedCommand::Daemon(app_config) => run_daemon(&app_config),
+        ResolvedCommand::Ingest(app_config) => run_ingest(&app_config),
     }
 }
 
@@ -76,13 +76,13 @@ struct Cli {
     config: Option<PathBuf>,
 
     #[command(subcommand)]
-    command: Option<Command>,
+    command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
-    #[command(about = "Run as log ingestion daemon")]
-    Daemon(DaemonCmd),
+    #[command(about = "Run log ingestion")]
+    Ingest(IngestCmd),
 
     #[command(about = "Query stored log entries")]
     Query(QueryCmd),
@@ -95,7 +95,7 @@ enum Command {
 }
 
 #[derive(Parser, Default)]
-struct DaemonCmd {
+struct IngestCmd {
     #[arg(long, help = "Read log lines from standard input")]
     stdin: bool,
 
@@ -148,6 +148,9 @@ struct QueryCmd {
 
     #[arg(short, long, value_enum, default_value = "text", help = "Output format")]
     format: OutputFormat,
+
+    #[arg(short, long, default_value_t = 1000, help = "Maximum number of entries to return")]
+    limit: u64,
 }
 
 #[derive(Parser, Clone)]
@@ -169,16 +172,19 @@ struct ExportCmd {
 
     #[arg(short, long, help = "Output file path")]
     output: PathBuf,
+
+    #[arg(short, long, default_value_t = 1000, help = "Maximum number of entries to export")]
+    limit: u64,
 }
 
 enum ResolvedCommand {
-    Daemon(AppConfig),
+    Ingest(AppConfig),
     Query { data_dir: PathBuf, cmd: QueryCmd },
     Export { data_dir: PathBuf, cmd: ExportCmd },
     Stats { data_dir: PathBuf },
 }
 
-fn build_partial_config(cli: &Cli, daemon: Option<&DaemonCmd>) -> PartialConfig {
+fn build_partial_config(cli: &Cli, ingest: Option<&IngestCmd>) -> PartialConfig {
     let mut partial = PartialConfig {
         data_dir: cli.data_dir.clone(),
         config_file: cli.config.clone(),
@@ -187,7 +193,7 @@ fn build_partial_config(cli: &Cli, daemon: Option<&DaemonCmd>) -> PartialConfig 
 
     // Flags and empty vectors map to None so the config layer treats them as unspecified.
     // This preserves three-layer precedence: CLI flags override file settings only when present.
-    if let Some(d) = daemon {
+    if let Some(d) = ingest {
         partial.memtable_flush_threshold = d.memtable_threshold_mib.map(|v| v * MEBI);
         partial.compaction_threshold = d.compaction_threshold;
         partial.compaction_enabled = if d.no_compaction { Some(false) } else { None };
@@ -209,23 +215,23 @@ fn build_partial_config(cli: &Cli, daemon: Option<&DaemonCmd>) -> PartialConfig 
 
 fn resolve_command(cli: &Cli) -> Result<ResolvedCommand> {
     match &cli.command {
-        Some(Command::Query(cmd)) => {
+        Command::Query(cmd) => {
             let partial = build_partial_config(cli, None);
             let app_config = config::load(partial).context("loading config")?;
             Ok(ResolvedCommand::Query { data_dir: app_config.data_dir, cmd: cmd.clone() })
         }
-        Some(Command::Export(cmd)) => {
+        Command::Export(cmd) => {
             let partial = build_partial_config(cli, None);
             let app_config = config::load(partial).context("loading config")?;
             Ok(ResolvedCommand::Export { data_dir: app_config.data_dir, cmd: cmd.clone() })
         }
-        Some(Command::Stats) => {
+        Command::Stats => {
             let partial = build_partial_config(cli, None);
             let app_config = config::load(partial).context("loading config")?;
             Ok(ResolvedCommand::Stats { data_dir: app_config.data_dir })
         }
-        Some(Command::Daemon(daemon_cmd)) => {
-            let partial = build_partial_config(cli, Some(daemon_cmd));
+        Command::Ingest(ingest_cmd) => {
+            let partial = build_partial_config(cli, Some(ingest_cmd));
             let app_config = config::load(partial).context("loading config")?;
 
             if !app_config.sources.stdin
@@ -235,21 +241,7 @@ fn resolve_command(cli: &Cli) -> Result<ResolvedCommand> {
             {
                 bail!("at least one source required (--stdin, --file, --tcp, --udp)");
             }
-            Ok(ResolvedCommand::Daemon(app_config))
-        }
-        // No subcommand defaults to daemon mode, allowing `kifa -c config.toml` without explicit `daemon`.
-        None => {
-            let partial = build_partial_config(cli, Some(&DaemonCmd::default()));
-            let app_config = config::load(partial).context("loading config")?;
-
-            if !app_config.sources.stdin
-                && app_config.sources.files.is_empty()
-                && app_config.sources.tcp.is_empty()
-                && app_config.sources.udp.is_empty()
-            {
-                bail!("at least one source required (--stdin, --file, --tcp, --udp)");
-            }
-            Ok(ResolvedCommand::Daemon(app_config))
+            Ok(ResolvedCommand::Ingest(app_config))
         }
     }
 }
@@ -322,6 +314,7 @@ fn run_query_command(data_dir: &Path, cmd: &QueryCmd) -> Result<ExitCode> {
         to_ns,
         format: cmd.format,
         output_file: None,
+        limit: cmd.limit,
     };
 
     let count = query::run_query(&options).context("query failed")?;
@@ -342,6 +335,7 @@ fn run_export_command(data_dir: &Path, cmd: &ExportCmd) -> Result<ExitCode> {
         to_ns,
         format: cmd.format,
         output_file: Some(cmd.output.clone()),
+        limit: cmd.limit,
     };
 
     query::run_export(&options).context("export failed")?;
@@ -353,7 +347,7 @@ fn run_stats_command(data_dir: &Path) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_daemon(config: &AppConfig) -> Result<ExitCode> {
+fn run_ingest(config: &AppConfig) -> Result<ExitCode> {
     let engine_config = Config {
         memtable_flush_threshold: config.storage.memtable_flush_threshold,
         compaction_threshold: config.storage.compaction_threshold,

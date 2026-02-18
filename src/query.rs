@@ -98,6 +98,7 @@ pub struct QueryOptions {
     pub to_ns: Option<u64>,
     pub format: OutputFormat,
     pub output_file: Option<PathBuf>,
+    pub limit: u64,
 }
 
 pub fn parse_time_input(s: &str) -> Result<u64, Error> {
@@ -163,12 +164,20 @@ pub fn run_query(options: &QueryOptions) -> Result<u64, Error> {
         writeln!(writer, "timestamp,timestamp_ns,data")?;
     }
 
-    for entry in entries {
-        write_entry(&mut writer, &entry, options.format)?;
+    for entry in &entries {
+        if options.limit > 0 && count >= options.limit {
+            break;
+        }
+        write_entry(&mut writer, entry, options.format)?;
         count += 1;
     }
 
     writer.flush()?;
+
+    let total_entries = entries.len() as u64;
+    if options.limit > 0 && total_entries > options.limit {
+        eprintln!("(showing {count} of {total_entries} entries, use --limit 0 for all)");
+    }
 
     if count == 0 {
         eprintln!("No entries matched the time range");
@@ -199,8 +208,11 @@ pub fn run_export(options: &QueryOptions) -> Result<u64, Error> {
     }
 
     let mut count = 0;
-    for entry in entries {
-        write_entry(&mut writer, &entry, options.format)?;
+    for entry in &entries {
+        if options.limit > 0 && count >= options.limit {
+            break;
+        }
+        write_entry(&mut writer, entry, options.format)?;
         count += 1;
     }
 
@@ -215,6 +227,11 @@ pub fn run_export(options: &QueryOptions) -> Result<u64, Error> {
     guard.disarm();
 
     log::info!("Exported {count} entries to {}", output_path.display());
+
+    let total_entries = entries.len() as u64;
+    if options.limit > 0 && total_entries > options.limit {
+        eprintln!("(exported {count} of {total_entries} entries, use --limit 0 for all)");
+    }
 
     if count == 0 {
         eprintln!("No entries matched the time range");

@@ -45,7 +45,7 @@ Ingest a transaction and query it back:
 
 ```bash
 echo '{"txn":"TXN-001","amount":5000,"status":"completed"}' | \
-  kifa daemon --stdin -d ./data
+  kifa ingest --stdin -d ./data
 
 kifa query -d ./data
 ```

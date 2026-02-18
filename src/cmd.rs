@@ -301,10 +301,19 @@ fn register_signals(
     Ok(())
 }
 
+fn parse_to_ns(s: &str) -> Result<u64, query::Error> {
+    let ns = parse_time_input(s)?;
+    // parse_time_input converts absolute timestamps to the floor of the specified second.
+    // Entries within that second carry nanosecond offsets that exceed the floor, causing
+    // the engine's upper-bound check to silently exclude them. Relative offsets produced
+    // by SystemTime::now() carry sub-second precision and are left unchanged.
+    Ok(if ns % 1_000_000_000 == 0 { ns.saturating_add(999_999_999) } else { ns })
+}
+
 fn run_query_command(data_dir: &Path, cmd: &QueryCmd) -> Result<ExitCode> {
     let from_ns =
         cmd.from.as_deref().map(parse_time_input).transpose().context("invalid --from")?;
-    let to_ns = cmd.to.as_deref().map(parse_time_input).transpose().context("invalid --to")?;
+    let to_ns = cmd.to.as_deref().map(parse_to_ns).transpose().context("invalid --to")?;
 
     validate_time_range(from_ns, to_ns).context("invalid time range")?;
 
@@ -325,7 +334,7 @@ fn run_query_command(data_dir: &Path, cmd: &QueryCmd) -> Result<ExitCode> {
 fn run_export_command(data_dir: &Path, cmd: &ExportCmd) -> Result<ExitCode> {
     let from_ns =
         cmd.from.as_deref().map(parse_time_input).transpose().context("invalid --from")?;
-    let to_ns = cmd.to.as_deref().map(parse_time_input).transpose().context("invalid --to")?;
+    let to_ns = cmd.to.as_deref().map(parse_to_ns).transpose().context("invalid --to")?;
 
     validate_time_range(from_ns, to_ns).context("invalid time range")?;
 

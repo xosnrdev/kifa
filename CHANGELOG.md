@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-rc.3] - 2026-02-18
+
+### Added
+
+- `--limit` on `query` and `export` (default: 1000). Truncation notice goes to stderr when results are capped. Use `--limit 0` to return all entries.
+
+### Changed
+
+- Replaced LSN with monotonic nanosecond timestamp as the primary ordering key. Entries are keyed by `timestamp_ns` at ingestion time. Existing data requires re-ingestion.
+- Renamed time filter flags `--from-time`/`--to-time` to `--from`/`--to` on `query` and `export`.
+- Renamed `kifa daemon` to `kifa ingest`.
+- Removed the implicit default to `ingest` when no subcommand is given.
+- Removed `Clone`, `Copy`, and `Default` derives from `Config` and `Stats` in `lib-kifa`.
+
+### Fixed
+
+- `--to` with a second-precision absolute timestamp excluded all entries within that second. The parsed value landed at the floor of the second while entries within it carried nanosecond offsets that exceeded the upper bound.
+
 ## [1.0.0-rc.2] - 2026-02-12
 
 ### Added
@@ -45,6 +63,7 @@ First release candidate.
 - Graceful shutdown on `SIGINT`/`SIGTERM` with pending data flush.
 - `lib-kifa` crate for embedding the storage engine directly in Rust applications.
 
-[Unreleased]: https://github.com/xosnrdev/kifa/compare/v1.0.0-rc.2...HEAD
+[Unreleased]: https://github.com/xosnrdev/kifa/compare/v1.0.0-rc.3...HEAD
+[1.0.0-rc.3]: https://github.com/xosnrdev/kifa/compare/v1.0.0-rc.2...v1.0.0-rc.3
 [1.0.0-rc.2]: https://github.com/xosnrdev/kifa/compare/v1.0.0-rc.1...v1.0.0-rc.2
 [1.0.0-rc.1]: https://github.com/xosnrdev/kifa/releases/tag/v1.0.0-rc.1

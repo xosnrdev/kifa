@@ -4,7 +4,8 @@ on:
   push:
     tags:
       - "v*"
-    paths: ["docs/**"]
+    paths:
+      - "docs/**"
   workflow_dispatch:
 
 permissions:

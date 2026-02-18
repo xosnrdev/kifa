@@ -14,8 +14,9 @@ The `query` command retrieves stored entries and prints them to stdout. Filter b
 | `--from`      | Filter from time           | `--from 1h`                  |
 | `--to`        | Filter until time          | `--to "2026-01-30"`          |
 | `--format`    | Output format              | `text`, `json`, `csv`, `hex` |
+| `--limit`     | Maximum entries to return  | `--limit 1000`               |
 
-Without filters, `query` returns all entries.
+Without filters, `query` returns up to 1000 entries. Use `--limit 0` to return all.
 
 ## Time Formats
 

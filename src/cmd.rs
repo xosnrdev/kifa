@@ -148,6 +148,9 @@ struct QueryCmd {
 
     #[arg(short, long, value_enum, default_value = "text", help = "Output format")]
     format: OutputFormat,
+
+    #[arg(short, long, default_value_t = 1000, help = "Maximum number of entries to return")]
+    limit: u64,
 }
 
 #[derive(Parser, Clone)]
@@ -169,6 +172,9 @@ struct ExportCmd {
 
     #[arg(short, long, help = "Output file path")]
     output: PathBuf,
+
+    #[arg(short, long, default_value_t = 1000, help = "Maximum number of entries to export")]
+    limit: u64,
 }
 
 enum ResolvedCommand {
@@ -308,6 +314,7 @@ fn run_query_command(data_dir: &Path, cmd: &QueryCmd) -> Result<ExitCode> {
         to_ns,
         format: cmd.format,
         output_file: None,
+        limit: cmd.limit,
     };
 
     let count = query::run_query(&options).context("query failed")?;
@@ -328,6 +335,7 @@ fn run_export_command(data_dir: &Path, cmd: &ExportCmd) -> Result<ExitCode> {
         to_ns,
         format: cmd.format,
         output_file: Some(cmd.output.clone()),
+        limit: cmd.limit,
     };
 
     query::run_export(&options).context("export failed")?;

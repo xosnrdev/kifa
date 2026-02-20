@@ -176,8 +176,10 @@ pub fn run_query(options: &QueryOptions) -> Result<u64, Error> {
 
     let total_entries = entries.len() as u64;
     if options.limit > 0 && total_entries > options.limit {
-        eprintln!("\n(showing {count} of {total_entries} entries, use --limit 0 for all)");
+        eprintln!("\n(showing {count} of {total_entries} entries, use --limit 0 for all)\n");
     }
+
+    log::info!("Returned {count} entries");
 
     if count == 0 {
         eprintln!("No entries matched the time range");

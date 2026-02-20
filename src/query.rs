@@ -161,7 +161,7 @@ pub fn run_query(options: &QueryOptions) -> Result<u64, Error> {
     let mut writer = BufWriter::new(stdout.lock());
 
     if options.format == OutputFormat::Csv {
-        writeln!(writer, "timestamp,timestamp_ns,data")?;
+        writeln!(writer, "timestamp,data")?;
     }
 
     for entry in &entries {
@@ -176,8 +176,10 @@ pub fn run_query(options: &QueryOptions) -> Result<u64, Error> {
 
     let total_entries = entries.len() as u64;
     if options.limit > 0 && total_entries > options.limit {
-        eprintln!("\n(showing {count} of {total_entries} entries, use --limit 0 for all)");
+        eprintln!("\n(showing {count} of {total_entries} entries, use --limit 0 for all)\n");
     }
+
+    log::info!("Returned {count} entries");
 
     if count == 0 {
         eprintln!("No entries matched the time range");
@@ -204,7 +206,7 @@ pub fn run_export(options: &QueryOptions) -> Result<u64, Error> {
     let mut writer = BufWriter::new(file);
 
     if options.format == OutputFormat::Csv {
-        writeln!(writer, "timestamp,timestamp_ns,data")?;
+        writeln!(writer, "timestamp,data")?;
     }
 
     let mut count = 0;
@@ -341,42 +343,6 @@ fn write_dec4(buf: &mut [u8], offset: usize, val: u32) {
     buf[offset + 3] = b'0' + (val % 10) as u8;
 }
 
-// Emits two digits per division via a precomputed pair table, halving
-// the number of modulo operations compared to one-digit-at-a-time.
-fn write_u64_decimal<W: Write>(writer: &mut W, value: u64) -> io::Result<()> {
-    const PAIRS: &[u8; 200] = b"\
-        00010203040506070809\
-        10111213141516171819\
-        20212223242526272829\
-        30313233343536373839\
-        40414243444546474849\
-        50515253545556575859\
-        60616263646566676869\
-        70717273747576777879\
-        80818283848586878889\
-        90919293949596979899";
-    let mut buf = [0; 20];
-    let mut pos = buf.len();
-    let mut n = value;
-    while n >= 100 {
-        let rem = (n % 100) as usize * 2;
-        n /= 100;
-        pos -= 2;
-        buf[pos] = PAIRS[rem];
-        buf[pos + 1] = PAIRS[rem + 1];
-    }
-    if n >= 10 {
-        let rem = n as usize * 2;
-        pos -= 2;
-        buf[pos] = PAIRS[rem];
-        buf[pos + 1] = PAIRS[rem + 1];
-    } else {
-        pos -= 1;
-        buf[pos] = b'0' + n as u8;
-    }
-    writer.write_all(&buf[pos..])
-}
-
 pub struct TimestampDisplay([u8; 23]);
 
 impl fmt::Display for TimestampDisplay {
@@ -418,9 +384,7 @@ fn write_entry_json<W: Write>(writer: &mut W, entry: &Entry) -> io::Result<()> {
     let ts = timestamp_buf(entry.timestamp_ns);
     writer.write_all(br#"{"timestamp":""#)?;
     writer.write_all(&ts)?;
-    writer.write_all(br#"","timestamp_ns":"#)?;
-    write_u64_decimal(writer, entry.timestamp_ns)?;
-    writer.write_all(br#","data":""#)?;
+    writer.write_all(br#"","data":""#)?;
     write_json_escaped_bytes(writer, &entry.data)?;
     writer.write_all(b"\"}\n")
 }
@@ -429,9 +393,7 @@ fn write_entry_csv<W: Write>(writer: &mut W, entry: &Entry) -> io::Result<()> {
     let ts = timestamp_buf(entry.timestamp_ns);
     writer.write_all(br#"""#)?;
     writer.write_all(&ts)?;
-    writer.write_all(br#"","#)?;
-    write_u64_decimal(writer, entry.timestamp_ns)?;
-    writer.write_all(br#",""#)?;
+    writer.write_all(br#"",""#)?;
     write_csv_escaped_bytes(writer, &entry.data)?;
     writer.write_all(b"\"\n")
 }
@@ -670,9 +632,7 @@ mod tests {
         let entry = Entry { timestamp_ns: TS_2026_NS, data: Arc::from(b"hello world".to_vec()) };
         let mut buf = Vec::new();
         write_entry_json(&mut buf, &entry).unwrap();
-        let expected = format!(
-            "{{\"timestamp\":\"2026-01-29 12:00:00 UTC\",\"timestamp_ns\":{TS_2026_NS},\"data\":\"hello world\"}}\n"
-        );
+        let expected = "{\"timestamp\":\"2026-01-29 12:00:00 UTC\",\"data\":\"hello world\"}\n";
         assert_eq!(String::from_utf8(buf).unwrap(), expected);
     }
 
@@ -684,9 +644,7 @@ mod tests {
         };
         let mut buf = Vec::new();
         write_entry_json(&mut buf, &entry).unwrap();
-        let expected = format!(
-            "{{\"timestamp\":\"2026-01-29 12:00:00 UTC\",\"timestamp_ns\":{TS_2026_NS},\"data\":\"line\\nwith\\ttabs\\\"quotes\\\\\"}}\n"
-        );
+        let expected = "{\"timestamp\":\"2026-01-29 12:00:00 UTC\",\"data\":\"line\\nwith\\ttabs\\\"quotes\\\\\"}\n";
         assert_eq!(String::from_utf8(buf).unwrap(), expected);
     }
 
@@ -695,9 +653,8 @@ mod tests {
         let entry = Entry { timestamp_ns: TS_2026_NS, data: Arc::from([0x00, 0xFF, 0x80]) };
         let mut buf = Vec::new();
         write_entry_json(&mut buf, &entry).unwrap();
-        let expected = format!(
-            "{{\"timestamp\":\"2026-01-29 12:00:00 UTC\",\"timestamp_ns\":{TS_2026_NS},\"data\":\"\\u0000\\u00ff\\u0080\"}}\n"
-        );
+        let expected =
+            "{\"timestamp\":\"2026-01-29 12:00:00 UTC\",\"data\":\"\\u0000\\u00ff\\u0080\"}\n";
         assert_eq!(String::from_utf8(buf).unwrap(), expected);
     }
 
@@ -706,9 +663,8 @@ mod tests {
         let entry = Entry { timestamp_ns: TS_2026_NS, data: Arc::from([0x01, 0x1F, 0x7F]) };
         let mut buf = Vec::new();
         write_entry_json(&mut buf, &entry).unwrap();
-        let expected = format!(
-            "{{\"timestamp\":\"2026-01-29 12:00:00 UTC\",\"timestamp_ns\":{TS_2026_NS},\"data\":\"\\u0001\\u001f\\u007f\"}}\n"
-        );
+        let expected =
+            "{\"timestamp\":\"2026-01-29 12:00:00 UTC\",\"data\":\"\\u0001\\u001f\\u007f\"}\n";
         assert_eq!(String::from_utf8(buf).unwrap(), expected);
     }
 
@@ -717,7 +673,7 @@ mod tests {
         let entry = Entry { timestamp_ns: TS_2026_NS, data: Arc::from(b"simple data".to_vec()) };
         let mut buf = Vec::new();
         write_entry_csv(&mut buf, &entry).unwrap();
-        let expected = format!("\"2026-01-29 12:00:00 UTC\",{TS_2026_NS},\"simple data\"\n");
+        let expected = "\"2026-01-29 12:00:00 UTC\",\"simple data\"\n";
         assert_eq!(String::from_utf8(buf).unwrap(), expected);
     }
 
@@ -727,8 +683,7 @@ mod tests {
             Entry { timestamp_ns: TS_2026_NS, data: Arc::from(b"has \"quotes\" inside".to_vec()) };
         let mut buf = Vec::new();
         write_entry_csv(&mut buf, &entry).unwrap();
-        let expected =
-            format!("\"2026-01-29 12:00:00 UTC\",{TS_2026_NS},\"has \"\"quotes\"\" inside\"\n");
+        let expected = "\"2026-01-29 12:00:00 UTC\",\"has \"\"quotes\"\" inside\"\n";
         assert_eq!(String::from_utf8(buf).unwrap(), expected);
     }
 
@@ -737,7 +692,7 @@ mod tests {
         let entry = Entry { timestamp_ns: TS_2026_NS, data: Arc::from([0xDE, 0xAD, 0xBE, 0xEF]) };
         let mut buf = Vec::new();
         write_entry_csv(&mut buf, &entry).unwrap();
-        let expected = format!("\"2026-01-29 12:00:00 UTC\",{TS_2026_NS},\"[hex:deadbeef]\"\n");
+        let expected = "\"2026-01-29 12:00:00 UTC\",\"[hex:deadbeef]\"\n";
         assert_eq!(String::from_utf8(buf).unwrap(), expected);
     }
 

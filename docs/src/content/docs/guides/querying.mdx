@@ -56,7 +56,7 @@ kifa query -d ./data --format json
 ```
 
 ```json title="Output"
-{"timestamp":"2026-01-31 18:30:00 UTC","timestamp_ns":1738348200000000000,"data":"{...}"}
+{"timestamp":"2026-01-31 18:30:00 UTC","data":"{...}"}
 ```
 </TabItem>
 <TabItem label="CSV">
@@ -65,8 +65,8 @@ kifa query -d ./data --format csv
 ```
 
 ```csv title="Output"
-timestamp,timestamp_ns,data
-"2026-01-31 18:30:00 UTC",1738348200000000000,"{...}"
+timestamp,data
+"2026-01-31 18:30:00 UTC","{...}"
 ```
 </TabItem>
 <TabItem label="Hex">

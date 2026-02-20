@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Removed `timestamp_ns` from `json` and `csv` output. Each record now has `timestamp` (UTC, second precision) and `data` only.
+
 ## [1.0.0-rc.3] - 2026-02-18
 
 ### Added

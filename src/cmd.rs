@@ -326,8 +326,7 @@ fn run_query_command(data_dir: &Path, cmd: &QueryCmd) -> Result<ExitCode> {
         limit: cmd.limit,
     };
 
-    let count = query::run_query(&options).context("query failed")?;
-    log::info!("Returned {count} entries");
+    query::run_query(&options).context("query failed")?;
     Ok(ExitCode::SUCCESS)
 }
 

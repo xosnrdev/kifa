@@ -655,13 +655,11 @@ impl ReadSnapshot {
     ///
     /// Returns an error if `SSTable` reading fails.
     pub fn get(&self, timestamp_ns: u64) -> Result<Option<Entry>, Error> {
-        for entry in self.memtable_entries.iter() {
-            if entry.timestamp_ns == timestamp_ns {
-                return Ok(Some(Entry {
-                    timestamp_ns: entry.timestamp_ns,
-                    data: entry.data.clone(),
-                }));
-            }
+        if let Ok(idx) =
+            self.memtable_entries.binary_search_by_key(&timestamp_ns, |e| e.timestamp_ns)
+        {
+            let entry = &self.memtable_entries[idx];
+            return Ok(Some(Entry { timestamp_ns: entry.timestamp_ns, data: entry.data.clone() }));
         }
 
         for sstable in &self.sstable_entries {

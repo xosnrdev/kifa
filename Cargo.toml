@@ -35,7 +35,7 @@ assets = [
 
 [workspace]
 resolver = "3"
-members = [".", "lib-kifa"]
+members = [".", "lib-kifa", "simd"]
 
 [workspace.package]
 version = "1.0.0"
@@ -63,6 +63,7 @@ mimalloc = { version = "0.1.48", features = ["v3"] }
 notify = "8.2.0"
 serde = { version = "1.0.228", features = ["derive"] }
 signal-hook = "0.4.3"
+simd = { path = "./simd" }
 toml = "0.9.11"
 
 [dev-dependencies]
@@ -83,6 +84,10 @@ panic = "abort"
 split-debuginfo = "packed"
 strip = "symbols"
 incremental = true
+
+[profile.release.package.simd]
+inherits = "release"
+opt-level = 3
 
 [profile.profiling]
 inherits = "release"

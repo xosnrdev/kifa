@@ -21,6 +21,7 @@ use lib_kifa::common::{atomic_rename, temp_path};
 use lib_kifa::engine::{Config, Stats, StorageEngine};
 use lib_kifa::{Entry, engine, map_err};
 use memchr_rs::memchr;
+use simd::write_escaped_json_bytes;
 
 #[derive(Debug)]
 pub enum Error {
@@ -385,7 +386,7 @@ fn write_entry_json<W: Write>(writer: &mut W, entry: &Entry) -> io::Result<()> {
     writer.write_all(br#"{"timestamp":""#)?;
     writer.write_all(&ts)?;
     writer.write_all(br#"","data":""#)?;
-    write_json_escaped_bytes(writer, &entry.data)?;
+    write_escaped_json_bytes(writer, &entry.data)?;
     writer.write_all(b"\"}\n")
 }
 
@@ -436,61 +437,6 @@ fn write_hex16(buf: &mut [u8], offset: usize, val: u64) {
         buf[offset + i * 2] = HEX[(b >> 4) as usize];
         buf[offset + i * 2 + 1] = HEX[(b & 0x0f) as usize];
     }
-}
-
-fn write_json_escaped_bytes<W: Write>(writer: &mut W, data: &[u8]) -> io::Result<()> {
-    static SAFE: [bool; 256] = {
-        let mut t = [false; 256];
-        let mut b = 0x20u8;
-        while b <= 0x7E {
-            t[b as usize] = true;
-            b += 1;
-        }
-        t[b'"' as usize] = false;
-        t[b'\\' as usize] = false;
-        t
-    };
-
-    let mut start = 0;
-    let len = data.len();
-    let mut i = 0;
-    while i < len {
-        if SAFE[data[i] as usize] {
-            i += 1;
-            continue;
-        }
-        if start < i {
-            writer.write_all(&data[start..i])?;
-        }
-        let byte = data[i];
-        match byte {
-            b'"' => writer.write_all(br#"\""#)?,
-            b'\\' => writer.write_all(br"\\")?,
-            b'\n' => writer.write_all(br"\n")?,
-            b'\r' => writer.write_all(br"\r")?,
-            b'\t' => writer.write_all(br"\t")?,
-            _ => {
-                let hi = byte >> 4;
-                let lo = byte & 0x0f;
-                writer.write_all(&[
-                    b'\\',
-                    b'u',
-                    b'0',
-                    b'0',
-                    b"0123456789abcdef"[hi as usize],
-                    b"0123456789abcdef"[lo as usize],
-                ])?;
-            }
-        }
-        i += 1;
-        start = i;
-    }
-
-    if start < len {
-        writer.write_all(&data[start..])?;
-    }
-
-    Ok(())
 }
 
 fn write_csv_escaped_bytes<W: Write>(writer: &mut W, data: &[u8]) -> io::Result<()> {

@@ -136,13 +136,13 @@ struct IngestCmd {
 struct QueryCmd {
     #[arg(
         long,
-        help = "Filter from time: relative (1h, 30m, 2d) or absolute (YYYY-MM-DD HH:mm:ss)"
+        help = "Filter from time: relative (e.g. 1h, 30m, 2d) or absolute format (e.g YYYY-MM-DD HH:mm:ss)"
     )]
     from: Option<String>,
 
     #[arg(
         long,
-        help = "Filter until time: relative (1h, 30m, 2d) or absolute (YYYY-MM-DD HH:mm:ss)"
+        help = "Filter until time: relative (e.g. 1h, 30m, 2d) or absolute format (e.g YYYY-MM-DD HH:mm:ss)"
     )]
     to: Option<String>,
 
@@ -157,13 +157,13 @@ struct QueryCmd {
 struct ExportCmd {
     #[arg(
         long,
-        help = "Filter from time: relative (1h, 30m, 2d) or absolute (YYYY-MM-DD HH:mm:ss)"
+        help = "Filter from time: relative (e.g. 1h, 30m, 2d) or absolute format (e.g YYYY-MM-DD HH:mm:ss)"
     )]
     from: Option<String>,
 
     #[arg(
         long,
-        help = "Filter until time: relative (1h, 30m, 2d) or absolute (YYYY-MM-DD HH:mm:ss)"
+        help = "Filter until time: relative (e.g. 1h, 30m, 2d) or absolute format (e.g YYYY-MM-DD HH:mm:ss)"
     )]
     to: Option<String>,
 

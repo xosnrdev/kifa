@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-02-24
+
+### Added
+
+- SIMD-accelerated JSON escaping via vectorized character scanning.
+
+### Fixed
+
+- Time format help text and error messages now mark values as examples (`e.g.`) to avoid implying they are the only accepted formats.
+
+### Performance
+
+- Binary search for entry retrieval in the engine, replacing linear scans.
+- SSTable reader reuses its internal data buffer across reads instead of reallocating.
+
 ## [1.0.0] - 2026-02-20
 
 ### Added
@@ -29,5 +44,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `lib-kifa` crate for embedding the storage engine directly in Rust applications.
 - Web documentation site at [xosnrdev.github.io/kifa](https://xosnrdev.github.io/kifa/).
 
-[Unreleased]: https://github.com/xosnrdev/kifa/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/xosnrdev/kifa/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/xosnrdev/kifa/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/xosnrdev/kifa/releases/tag/v1.0.0

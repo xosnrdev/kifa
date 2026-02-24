@@ -259,6 +259,7 @@ pub struct SstableReader {
     header: Header,
     hasher: crc32fast::Hasher,
     entries_read: u32,
+    data_buf: Vec<u8>,
 }
 
 impl SstableReader {
@@ -271,7 +272,13 @@ impl SstableReader {
         let header = Header::from_bytes(header_bytes);
         header.validate()?;
 
-        Ok(Self { reader, header, hasher: crc32fast::Hasher::new(), entries_read: 0 })
+        Ok(Self {
+            reader,
+            header,
+            hasher: crc32fast::Hasher::new(),
+            entries_read: 0,
+            data_buf: Vec::new(),
+        })
     }
 
     #[cfg(test)]
@@ -307,16 +314,16 @@ impl SstableReader {
             return Err(Error::EntryTooLarge { size: len, max: MAX_ENTRY_SIZE });
         }
 
-        let mut data_buf = vec![0; len];
-        self.reader.read_exact(&mut data_buf)?;
+        self.data_buf.resize(len, 0);
+        self.reader.read_exact(&mut self.data_buf)?;
 
         self.hasher.update(&timestamp_bytes);
         self.hasher.update(&length_bytes);
-        self.hasher.update(&data_buf);
+        self.hasher.update(&self.data_buf);
 
         self.entries_read += 1;
 
-        let data: Arc<[u8]> = data_buf.into();
+        let data: Arc<[u8]> = Arc::from(self.data_buf.as_slice());
         Ok(Some(Entry { timestamp_ns, data }))
     }
 

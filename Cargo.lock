@@ -552,6 +552,7 @@ dependencies = [
  "notify",
  "serde",
  "signal-hook",
+ "simd",
  "sysinfo",
  "tempfile",
  "toml",
@@ -989,6 +990,10 @@ dependencies = [
  "errno",
  "libc",
 ]
+
+[[package]]
+name = "simd"
+version = "1.0.0"
 
 [[package]]
 name = "strsim"

@@ -14,6 +14,23 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   them before the next release.
 </Aside>
 
+## [1.0.1] - 2026-02-24
+
+[GitHub Release](https://github.com/xosnrdev/kifa/releases/tag/v1.0.1)
+
+### Added
+
+- SIMD-accelerated JSON escaping via vectorized character scanning.
+
+### Fixed
+
+- Time format help text and error messages now mark values as examples (`e.g.`) to avoid implying they are the only accepted formats.
+
+### Performance
+
+- Binary search for entry retrieval in the engine, replacing linear scans.
+- SSTable reader reuses its internal data buffer across reads instead of reallocating.
+
 ## [1.0.0] - 2026-02-20
 
 [GitHub Release](https://github.com/xosnrdev/kifa/releases/tag/v1.0.0)

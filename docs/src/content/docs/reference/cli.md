@@ -53,7 +53,7 @@ Query stored log entries and print to stdout.
 
 ### Time Format
 
-Relative: `1h`, `30m`, `2d`, `1h30m`
+Relative (e.g.): `1h`, `30m`, `2d`, `1h30m`
 
 Absolute: `YYYY-MM-DD`, `YYYY-MM-DD HH:mm:ss`, ISO 8601
 

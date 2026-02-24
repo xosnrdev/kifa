@@ -1,7 +1,7 @@
 //! Read-only query and export interface for the storage engine.
 //!
 //! The module uses [`humantime`] for time parsing because the standard library's `Duration` lacks
-//! string parsing entirely. This crate supports both relative offsets (`1h`, `30m`) and RFC3339
+//! string parsing entirely. This crate supports both relative offsets (e.g. `1h`, `30m`) and RFC3339
 //! timestamps without pulling in heavier alternatives like `chrono`.
 //!
 //! JSON and CSV serialization uses manual byte-level escaping rather than `serde_json` to keep the
@@ -50,8 +50,8 @@ impl fmt::Display for Error {
             Self::TimeParseFailed(s) => {
                 write!(
                     f,
-                    "failed to parse time `{s}`: expected relative offset (1h, 30m, 2d) \
-                     or timestamp (YYYY-MM-DD HH:mm:ss or YYYY-MM-DDTHH:mm:ssZ)"
+                    "failed to parse time `{s}`: expected relative offset (e.g. 1h, 30m, 2d) \
+                     or timestamp format (e.g YYYY-MM-DD HH:mm:ss or YYYY-MM-DDTHH:mm:ssZ)"
                 )
             }
         }

@@ -856,12 +856,8 @@ fn compaction_loop(
         }
 
         let mut triggered = lock.lock().unwrap_or_else(sync::PoisonError::into_inner);
-        // Checks the flag before blocking so a notify that arrived between the last
-        // drop(triggered) and this lock.lock() is not lost.
-        if !*triggered {
-            let result = cvar.wait_timeout(triggered, COMPACTION_POLL_INTERVAL);
-            triggered = result.unwrap_or_else(sync::PoisonError::into_inner).0;
-        }
+        let result = cvar.wait_timeout(triggered, COMPACTION_POLL_INTERVAL);
+        triggered = result.unwrap_or_else(sync::PoisonError::into_inner).0;
         // Resets and releases the lock so new triggers can arrive while compaction runs.
         *triggered = false;
         drop(triggered);

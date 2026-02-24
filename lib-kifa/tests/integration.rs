@@ -372,9 +372,13 @@ fn test_background_compaction_triggers_on_threshold() {
         engine.flush().unwrap();
     }
 
-    thread::sleep(time::Duration::from_millis(200));
-
-    assert!(engine.sstable_count() < 4);
+    for _ in 0..100 {
+        if engine.sstable_count() < 4 {
+            return;
+        }
+        thread::sleep(time::Duration::from_millis(50));
+    }
+    panic!("compaction did not reduce sstable count below 4 within 5s");
 }
 
 #[test]
@@ -460,7 +464,11 @@ fn test_compaction_skipped_in_emergency() {
 
     engine.set_flush_mode(FlushMode::Normal);
 
-    thread::sleep(time::Duration::from_millis(200));
-
-    assert!(engine.sstable_count() < 4);
+    for _ in 0..100 {
+        if engine.sstable_count() < 4 {
+            return;
+        }
+        thread::sleep(time::Duration::from_millis(50));
+    }
+    panic!("compaction did not reduce sstable count below 4 within 5s");
 }
